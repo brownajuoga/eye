@@ -1,4 +1,4 @@
-#  eyeree to use, modify, and deploy.ree to use, modify, and deploy.ree to use, modify, and deploy.
+#  eye
 
 **Event-Driven AI Video Monitoring for Low-Cost Hardware**
 

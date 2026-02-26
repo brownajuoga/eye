@@ -1,4 +1,4 @@
-#  eye
+#  eyeree to use, modify, and deploy.ree to use, modify, and deploy.ree to use, modify, and deploy.
 
 **Event-Driven AI Video Monitoring for Low-Cost Hardware**
 
@@ -47,10 +47,7 @@ Traditional CCTV and motion-detection systems:
 
 * ⚡ **Edge-Optimized Performance**
   Built in Go for speed, concurrency, and low memory usage.
-
-* 💸 **Zero Subscription Cost**
-  Entirely open-source. No cloud lock-in.
-
+ 
 * 📉 **Bandwidth Efficient**
   Only short, confirmed event clips are sent to the user.
 
@@ -96,7 +93,7 @@ eye/
 │   └── prompts.yaml   # User-defined event prompts
 │
 ├── scripts/
-│   └── install.sh
+│   └── install.sh 
 │
 └── README.md
 ```
@@ -187,4 +184,4 @@ Contributions are welcome:
 
 ## 📜 License
 
-MIT License — free to use, modify, and deploy.
+free to use, modify

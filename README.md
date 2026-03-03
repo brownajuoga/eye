@@ -181,7 +181,3 @@ Contributions are welcome:
 * Additional language support
 
 ---
-
-## 📜 License
-
-free to use, modify

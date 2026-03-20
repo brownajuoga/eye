@@ -1,2 +1,46 @@
 pnotes.txt
 .venveye/
+
+ai_server/__pycache__/dino.cpython-312.pyc
+ ai_server/dino.py
+ ai_server/index.html
+ ai_server/index.html.1
+ ai_server/index.html.2
+ ai_server/index.html.3
+ ai_server/index.html.4
+ ai_server/prompts.py
+ ai_server/runs/detect/predict5/0.avi
+ ai_server/runs/detect/predict6/0.avi
+ ai_server/weights/groundingdino_swint_ogc.pth
+ ai_server/yolov8s-worldv2.pt
+
+ ai_server/__pycache__/dino.cpython-312.pyc
+/home/aabrown/me/eye/eye/ai_server/__pycache__
+/home/aabrown/me/eye/eye/ai_server/runs
+/home/aabrown/me/eye/eye/ai_server/runs/detect
+/home/aabrown/me/eye/eye/ai_server/runs/detect/predict
+/home/aabrown/me/eye/eye/ai_server/runs/detect/predict2
+/home/aabrown/me/eye/eye/ai_server/runs/detect/predict3
+/home/aabrown/me/eye/eye/ai_server/runs/detect/predict4
+/home/aabrown/me/eye/eye/ai_server/runs/detect/predict5
+/home/aabrown/me/eye/eye/ai_server/runs/detect/predict6
+/home/aabrown/me/eye/eye/ai_server/index.html
+/home/aabrown/me/eye/eye/ai_server/index.html.1
+/home/aabrown/me/eye/eye/ai_server/index.html.2
+/home/aabrown/me/eye/eye/ai_server/index.html.3
+/home/aabrown/me/eye/eye/ai_server/index.html.4
+/home/aabrown/me/eye/eye/ai_server/yolo11n.pt
+/home/aabrown/me/eye/eye/ai_server/yolov8n.pt
+/home/aabrown/me/eye/eye/ai_server/yolov8s-worldv2.pt
+/home/aabrown/me/eye/eye/ai_server/__pycache__
+/home/aabrown/me/eye/eye/ai_server/runs
+/home/aabrown/me/eye/eye/ai_server/weights
+/home/aabrown/me/eye/eye/ai_server/index.html
+/home/aabrown/me/eye/eye/ai_server/index.html.1
+/home/aabrown/me/eye/eye/ai_server/index.html.2
+/home/aabrown/me/eye/eye/ai_server/index.html.3
+/home/aabrown/me/eye/eye/ai_server/index.html.4
+/home/aabrown/me/eye/eye/ai_server/yolo11n.pt
+/home/aabrown/me/eye/eye/ai_server/yolov8n.pt
+/home/aabrown/me/eye/eye/ai_server/yolov8s-worldv2.pt
+/home/aabrown/me/eye/eye/scout/frame.jpg

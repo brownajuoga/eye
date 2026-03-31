@@ -2,6 +2,7 @@ from fastapi import FastAPI, File, UploadFile
 import uvicorn
 
 from yolo import detect_objects
+from policy import analyze_event
 
 app = FastAPI()
 
@@ -13,9 +14,13 @@ async def analyze(file: UploadFile = File(...)):
 
     detections = detect_objects(contents)
 
+    event = analyze_event(detections)
+
     print("Detections:", detections)
+    print("Event:", event)
 
     return {
+        "event": event,
         "detections": detections
     }
 

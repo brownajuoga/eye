@@ -1,8 +1,7 @@
 from fastapi import FastAPI, File, UploadFile
 import uvicorn
 
-from dino import detect
-from prompts import load_prompt
+from yolo import detect_objects
 
 app = FastAPI()
 
@@ -12,15 +11,12 @@ async def analyze(file: UploadFile = File(...)):
 
     contents = await file.read()
 
-    prompt = load_prompt()
+    objects = detect_objects(contents)
 
-    objects = detect(contents, prompt)
-
-    print("Prompt:", prompt)
     print("Detected:", objects)
 
     return {
-        "detected": objects
+        "objects": objects
     }
 
 

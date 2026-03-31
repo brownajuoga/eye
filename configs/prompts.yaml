@@ -7,3 +7,17 @@ watch_for:
   - headphone
   - sweets
   - badge
+  - backpack
+  - handbag
+  - cell phone
+  - bottle
+  - laptop
+
+ignore:
+  - chair
+  - couch
+  - bed
+
+rules:
+  require_person: true
+  min_confidence: 0.4

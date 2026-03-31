@@ -11,12 +11,12 @@ async def analyze(file: UploadFile = File(...)):
 
     contents = await file.read()
 
-    objects = detect_objects(contents)
+    detections = detect_objects(contents)
 
-    print("Detected:", objects)
+    print("Detections:", detections)
 
     return {
-        "objects": objects
+        "detections": detections
     }
 
 

@@ -3,12 +3,16 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
+	"fmt"
 	"image"
 	"image/color"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gocv.io/x/gocv"
@@ -25,37 +29,55 @@ var (
 )
 
 func main() {
-	webcam, err := gocv.OpenVideoCapture(0)
-	if err != nil {
-		panic(err)
-	}
-	defer webcam.Close()
+	sourceFlag := flag.String("source", "0", "video source: webcam index, video file path, or folder of recorded videos")
+	triggerIntervalFlag := flag.Duration("trigger-interval", 0, "minimum time between AI analyses; defaults to 1s for live input and 250ms for recorded video")
+	flag.Parse()
 
-	window := gocv.NewWindow("Scout Live Feed")
+	source, err := openSource(*sourceFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "open source: %v\n", err)
+		os.Exit(1)
+	}
+	defer source.Close()
+
+	window := gocv.NewWindow(source.WindowTitle())
 	defer window.Close()
 
 	frame := gocv.NewMat()
 	defer frame.Close()
 
 	detector := NewMotionDetector(1000)
-	lastTrigger := time.Now()
+	triggerInterval := *triggerIntervalFlag
+	if triggerInterval <= 0 {
+		triggerInterval = source.DefaultTriggerInterval()
+	}
+	lastTrigger := time.Now().Add(-triggerInterval)
+	var analysisInFlight atomic.Bool
 
 	for {
-		if ok := webcam.Read(&frame); !ok || frame.Empty() {
+		if ok := source.Read(&frame); !ok {
+			if source.IsLive() {
+				continue
+			}
+			break
+		}
+		if frame.Empty() {
 			continue
 		}
 
-		motion, _ := detector.Detect(frame)
-		if motion && time.Since(lastTrigger) > 1*time.Second {
+		motion := detector.Detect(frame)
+		if motion && time.Since(lastTrigger) >= triggerInterval && analysisInFlight.CompareAndSwap(false, true) {
 			tempFrame := frame.Clone()
 			go func(img gocv.Mat) {
 				defer img.Close()
+				defer analysisInFlight.Store(false)
+
 				buf, err := gocv.IMEncode(".jpg", img)
 				if err != nil {
 					return
 				}
 				defer buf.Close()
-				
+
 				res := sendBytesToAi(buf.GetBytes())
 				var boxes []Box
 				if err := json.Unmarshal([]byte(res), &boxes); err == nil {
@@ -88,9 +110,16 @@ func main() {
 func sendBytesToAi(imgBytes []byte) string {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	part, _ := writer.CreateFormFile("file", "frame.jpg")
-	part.Write(imgBytes)
-	writer.Close()
+	part, err := writer.CreateFormFile("file", "frame.jpg")
+	if err != nil {
+		return "[]"
+	}
+	if _, err := part.Write(imgBytes); err != nil {
+		return "[]"
+	}
+	if err := writer.Close(); err != nil {
+		return "[]"
+	}
 
 	resp, err := http.Post("http://localhost:8080/analyze", writer.FormDataContentType(), body)
 	if err != nil {

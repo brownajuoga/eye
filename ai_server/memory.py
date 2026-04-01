@@ -1,23 +1,76 @@
-import time
+from __future__ import annotations
 
-memory_store = []
-
-def store_event(event, detections, expert=None):
-
-    entry = {
-        "timestamp": time.time(),
-        "event": event,
-        "detections": detections,
-        "expert": expert
-    }
-
-    memory_store.append(entry)
-
-    # keep memory small (last 100 events)
-    if len(memory_store) > 100:
-        memory_store.pop(0)
+from collections import Counter
+from copy import deepcopy
+from datetime import datetime, timezone
+import threading
+from typing import Any
 
 
-def query_memory():
+class MemoryStore:
+    def __init__(self, max_events: int = 500):
+        self.max_events = max_events
+        self._events: list[dict[str, Any]] = []
+        self._lock = threading.RLock()
 
-    return memory_store[-10:]  # last 10 events
+    def store_event(
+        self,
+        *,
+        detections: list[dict[str, Any]],
+        event: dict[str, Any],
+        expert_decision: dict[str, Any] | None,
+        source: str,
+    ) -> dict[str, Any]:
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": source,
+            "detections": deepcopy(detections),
+            "event": deepcopy(event),
+            "expert": deepcopy(expert_decision),
+        }
+        with self._lock:
+            self._events.append(record)
+            if len(self._events) > self.max_events:
+                self._events = self._events[-self.max_events:]
+        return deepcopy(record)
+
+    def recent(self, limit: int = 10) -> list[dict[str, Any]]:
+        with self._lock:
+            return deepcopy(self._events[-limit:])
+
+    def filter(
+        self,
+        *,
+        labels: list[str] | None = None,
+        actions: list[str] | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        labels = set(labels or [])
+        actions = set(actions or [])
+
+        with self._lock:
+            filtered: list[dict[str, Any]] = []
+            for event in reversed(self._events):
+                detection_labels = {item.get("label") for item in event.get("detections", [])}
+                expert_action = (event.get("expert") or {}).get("action")
+
+                if labels and not labels.intersection(detection_labels):
+                    continue
+                if actions and expert_action not in actions:
+                    continue
+
+                filtered.append(deepcopy(event))
+                if len(filtered) >= limit:
+                    break
+        filtered.reverse()
+        return filtered
+
+    def recent_label_counts(self, limit: int = 25) -> dict[str, int]:
+        counts: Counter[str] = Counter()
+        for event in self.recent(limit=limit):
+            counts.update(item.get("label") for item in event.get("detections", []))
+        return dict(counts)
+
+    def size(self) -> int:
+        with self._lock:
+            return len(self._events)

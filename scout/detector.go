@@ -16,9 +16,11 @@ func NewMotionDetector(threshold int) *MotionDetector {
 	}
 }
 
-func (m *MotionDetector) Detect(frame gocv.Mat) (bool, gocv.Mat) {
+func (m *MotionDetector) Detect(frame gocv.Mat) bool {
 	mask := gocv.NewMat()
+	defer mask.Close()
+
 	m.bgSubtractor.Apply(frame, &mask)
 	movement := gocv.CountNonZero(mask)
-	return movement > m.threshold, mask
+	return movement > m.threshold
 }

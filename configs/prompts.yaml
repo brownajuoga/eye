@@ -1,23 +1,37 @@
+mode: balanced
+model:
+  default: yolov8n.pt
+  lightweight: yolov8n.pt
+  balanced: yolov8n.pt
+  performance: yolov8n.pt
+  custom: null
+  confidence_threshold: 0.35
+expert:
+  backend: mock
+  ollama_model: llava:7b
+  transformers_model: vikhyatk/moondream2
+  max_retries: 2
+  timeout_seconds: 20
+memory:
+  max_events: 500
+  recent_limit: 10
+  pattern_window: 25
 watch_for:
-  - person
-  - dog
-  - chair
-  - phone
-  - hand
-  - headphone
-  - sweets
-  - badge
-  - backpack
-  - handbag
-  - cell phone
-  - bottle
-  - laptop
-
+- bottle
+- backpack
+- cell phone
+- hand
+- handbag
+- laptop
+- person
 ignore:
-  - chair
-  - couch
-  - bed
-
+- chair
+- couch
+- bed
 rules:
   require_person: true
-  min_confidence: 0.4
+  min_confidence: 0.35
+  min_watch_matches: 1
+  always_analyze: false
+  alert_on_repeated_labels: 3
+  repeated_label_window: 10

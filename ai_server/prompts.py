@@ -1,12 +1,12 @@
-import yaml
+from pathlib import Path
 
-PROMPT_FILE = "../configs/prompts.yaml"
+from policy import PolicyEngine
 
-def load_prompt():
-    try:
-        with open(PROMPT_FILE) as f:
-            data = yaml.safe_load(f)
-        objects = data.get("watch_for", [])
-        return " . ".join(objects)
-    except Exception:
-        return "person . dog . chair"
+
+PROMPT_FILE = Path(__file__).resolve().parent.parent / "configs" / "prompts.yaml"
+
+
+def load_prompt() -> str:
+    policy = PolicyEngine(PROMPT_FILE).get_policy()
+    objects = policy.get("watch_for", [])
+    return " . ".join(objects) if objects else "person . bag . bottle"

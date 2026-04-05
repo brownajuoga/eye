@@ -1,4 +1,4 @@
-enum AppSection { dashboard, models, controls, expert, videos, logs, rules }
+enum AppSection { dashboard, feeds, chat, models, controls, expert, videos, logs, rules }
 
 class DetectionItem {
   const DetectionItem({
@@ -250,6 +250,8 @@ class DashboardSnapshot {
     required this.latestResult,
     required this.latestFrameUrl,
     required this.videoHistory,
+    required this.feeds,
+    required this.chatHistory,
   });
 
   final Map<String, dynamic> policy;
@@ -262,6 +264,8 @@ class DashboardSnapshot {
   final LatestResult? latestResult;
   final String? latestFrameUrl;
   final List<VideoAnalysisResult> videoHistory;
+  final List<FeedSnapshot> feeds;
+  final List<ChatMessage> chatHistory;
 
   factory DashboardSnapshot.fromJson(Map<String, dynamic> json, {required String baseUrl}) {
     final policy = json['policy'] as Map<String, dynamic>? ?? const {};
@@ -288,6 +292,12 @@ class DashboardSnapshot {
       videoHistory: ((json['video_history'] as List<dynamic>? ?? const []))
           .map((item) => VideoAnalysisResult.fromJson(item as Map<String, dynamic>))
           .toList(),
+      feeds: ((json['feeds'] as List<dynamic>? ?? const []))
+          .map((item) => FeedSnapshot.fromJson(item as Map<String, dynamic>, baseUrl: baseUrl))
+          .toList(),
+      chatHistory: ((json['chat_history'] as List<dynamic>? ?? const []))
+          .map((item) => ChatMessage.fromJson(item as Map<String, dynamic>))
+          .toList(),
     );
   }
 }
@@ -300,6 +310,9 @@ class ExpertSettings {
     required this.maxRetries,
     required this.timeoutSeconds,
     required this.taskProfile,
+    required this.mission,
+    required this.operatorInstructions,
+    required this.activeTask,
   });
 
   final String backend;
@@ -308,6 +321,9 @@ class ExpertSettings {
   final int maxRetries;
   final int timeoutSeconds;
   final String taskProfile;
+  final String mission;
+  final String operatorInstructions;
+  final String activeTask;
 
   factory ExpertSettings.fromPolicy(Map<String, dynamic> policy) {
     final expert = policy['expert'] as Map<String, dynamic>? ?? const {};
@@ -318,6 +334,9 @@ class ExpertSettings {
       maxRetries: expert['max_retries'] as int? ?? 2,
       timeoutSeconds: expert['timeout_seconds'] as int? ?? 20,
       taskProfile: expert['task_profile'] as String? ?? 'general',
+      mission: expert['mission'] as String? ?? '',
+      operatorInstructions: expert['operator_instructions'] as String? ?? '',
+      activeTask: expert['active_task'] as String? ?? '',
     );
   }
 
@@ -328,6 +347,9 @@ class ExpertSettings {
     int? maxRetries,
     int? timeoutSeconds,
     String? taskProfile,
+    String? mission,
+    String? operatorInstructions,
+    String? activeTask,
   }) {
     return ExpertSettings(
       backend: backend ?? this.backend,
@@ -336,6 +358,9 @@ class ExpertSettings {
       maxRetries: maxRetries ?? this.maxRetries,
       timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
       taskProfile: taskProfile ?? this.taskProfile,
+      mission: mission ?? this.mission,
+      operatorInstructions: operatorInstructions ?? this.operatorInstructions,
+      activeTask: activeTask ?? this.activeTask,
     );
   }
 }
@@ -379,6 +404,88 @@ class VideoAnalysisResult {
       framesProcessed: json['frames_processed'] as int? ?? 0,
       dominantAction: json['dominant_action'] as String? ?? 'ignore',
       aggregatedLabels: (json['aggregated_labels'] as List<dynamic>? ?? const []).map((item) => item.toString()).toList(),
+    );
+  }
+}
+
+class FeedSnapshot {
+  const FeedSnapshot({
+    required this.id,
+    required this.sourceId,
+    required this.name,
+    required this.live,
+    required this.updatedAt,
+    required this.frameUrl,
+    required this.detections,
+    required this.eventReason,
+    required this.expertReason,
+  });
+
+  final String id;
+  final String sourceId;
+  final String name;
+  final bool live;
+  final String updatedAt;
+  final String? frameUrl;
+  final List<DetectionItem> detections;
+  final String eventReason;
+  final String expertReason;
+
+  factory FeedSnapshot.fromJson(Map<String, dynamic> json, {required String baseUrl}) {
+    final event = json['event'] as Map<String, dynamic>? ?? const {};
+    final expert = json['expert'] as Map<String, dynamic>? ?? const {};
+    final frameUrl = json['frame_url'] as String?;
+    return FeedSnapshot(
+      id: json['id'] as String? ?? '',
+      sourceId: json['source_id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      live: json['live'] as bool? ?? true,
+      updatedAt: json['updated_at'] as String? ?? '',
+      frameUrl: frameUrl == null ? null : '$baseUrl$frameUrl',
+      detections: (json['detections'] as List<dynamic>? ?? const [])
+          .map((item) => DetectionItem.fromJson(item as Map<String, dynamic>))
+          .toList(),
+      eventReason: event['reason'] as String? ?? '',
+      expertReason: expert['reason'] as String? ?? '',
+    );
+  }
+}
+
+class ChatMessage {
+  const ChatMessage({
+    required this.timestamp,
+    required this.role,
+    required this.content,
+    this.feedId,
+    this.taskSummary = '',
+    this.plan = const {},
+    this.evidence = const [],
+    this.actions = const [],
+  });
+
+  final String timestamp;
+  final String role;
+  final String content;
+  final String? feedId;
+  final String taskSummary;
+  final Map<String, dynamic> plan;
+  final List<Map<String, dynamic>> evidence;
+  final List<Map<String, dynamic>> actions;
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    return ChatMessage(
+      timestamp: json['timestamp'] as String? ?? '',
+      role: json['role'] as String? ?? 'assistant',
+      content: json['content'] as String? ?? '',
+      feedId: json['feed_id'] as String?,
+      taskSummary: json['task_summary'] as String? ?? '',
+      plan: json['plan'] as Map<String, dynamic>? ?? const {},
+      evidence: (json['evidence'] as List<dynamic>? ?? const [])
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList(),
+      actions: (json['actions'] as List<dynamic>? ?? const [])
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList(),
     );
   }
 }

@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from PIL import Image
@@ -22,6 +22,7 @@ from yolo import YoloDetector
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR.parent / "configs" / "prompts.yaml"
 LATEST_FRAME_PATH = BASE_DIR / "latest_frame.jpg"
+FEEDS_DIR = BASE_DIR / "feeds"
 
 
 @asynccontextmanager
@@ -40,6 +41,8 @@ async def lifespan(app: FastAPI):
     app.state.latest_result = None
     app.state.latest_frame_updated_at = None
     app.state.video_analyses = []
+    app.state.feeds = {}
+    app.state.chat_history = []
     yield
 
 
@@ -96,6 +99,8 @@ async def dashboard() -> dict:
         "latest_result": app.state.latest_result,
         "latest_frame_url": f"/latest-frame?t={app.state.latest_frame_updated_at}" if LATEST_FRAME_PATH.exists() else None,
         "video_history": list(reversed(app.state.video_analyses[-20:])),
+        "feeds": list_feed_snapshots(app.state.feeds),
+        "chat_history": app.state.chat_history[-50:],
     }
 
 
@@ -103,6 +108,11 @@ async def dashboard() -> dict:
 async def logs(limit: int = 100) -> dict:
     memory_store: MemoryStore = app.state.memory_store
     return {"logs": memory_store.logs(limit=limit)}
+
+
+@app.get("/feeds")
+async def feeds() -> dict:
+    return {"feeds": list_feed_snapshots(app.state.feeds)}
 
 
 @app.get("/models")
@@ -119,6 +129,57 @@ async def capabilities() -> dict:
     detector: YoloDetector = app.state.detector
     policy = policy_engine.get_policy()
     return {"capabilities": detector.describe_capabilities(policy)}
+
+
+@app.get("/chat/history")
+async def chat_history(limit: int = 50) -> dict:
+    return {"messages": app.state.chat_history[-limit:]}
+
+
+@app.post("/chat/message")
+async def chat_message(payload: dict) -> dict:
+    policy_engine: PolicyEngine = app.state.policy_engine
+    expert_system: ExpertSystem = app.state.expert_system
+    memory_store: MemoryStore = app.state.memory_store
+    detector: YoloDetector = app.state.detector
+
+    message = str(payload.get("message", "")).strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    feed_id = str(payload.get("feed_id", "")).strip() or None
+    policy = policy_engine.get_policy()
+    latest_result = resolve_chat_result(app.state, feed_id)
+    recent_memory = memory_store.recent(limit=policy["memory"]["recent_limit"])
+    reply = expert_system.chat(
+        message=message,
+        policy=policy,
+        memory=recent_memory,
+        latest_result=latest_result,
+        feed_id=feed_id,
+        feeds=list_feed_snapshots(app.state.feeds),
+        models=detector.list_models(policy),
+    )
+
+    user_entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "role": "user",
+        "content": message,
+        "feed_id": feed_id,
+    }
+    assistant_entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "role": "assistant",
+        "content": reply["message"],
+        "feed_id": feed_id,
+        "task_summary": reply.get("task_summary", ""),
+        "plan": reply.get("plan", {}),
+        "evidence": reply.get("evidence", []),
+        "actions": reply.get("actions", []),
+    }
+    app.state.chat_history.extend([user_entry, assistant_entry])
+    memory_store.log("system", "Operator chatted with expert", {"feed_id": feed_id, "message": message})
+    return {"reply": reply, "messages": app.state.chat_history[-50:]}
 
 
 @app.get("/experts")
@@ -228,6 +289,17 @@ async def latest_frame():
     return FileResponse(LATEST_FRAME_PATH, media_type="image/jpeg")
 
 
+@app.get("/feed-frame/{feed_id}")
+async def feed_frame(feed_id: str):
+    feed = app.state.feeds.get(feed_id)
+    if not feed:
+        raise HTTPException(status_code=404, detail="Unknown feed")
+    frame_path = Path(feed["frame_path"])
+    if not frame_path.exists():
+        raise HTTPException(status_code=404, detail="No frame captured yet for feed")
+    return FileResponse(frame_path, media_type="image/jpeg")
+
+
 @app.get("/videos/history")
 async def videos_history() -> dict:
     return {"items": list(reversed(app.state.video_analyses[-20:]))}
@@ -275,7 +347,12 @@ async def analyze_video(file: UploadFile = File(...)) -> dict:
 
 
 @app.post("/analyze")
-async def analyze(file: UploadFile = File(...)) -> dict:
+async def analyze(
+    file: UploadFile = File(...),
+    source_id: str = Form("default"),
+    source_name: str = Form("default"),
+    live_source: bool = Form(True),
+) -> dict:
     if file.content_type and not (
         file.content_type.startswith("image/") or file.content_type == "application/octet-stream"
     ):
@@ -296,6 +373,7 @@ async def analyze(file: UploadFile = File(...)) -> dict:
     LATEST_FRAME_PATH.write_bytes(contents)
     app.state.latest_frame_updated_at = datetime.now(timezone.utc).isoformat()
     frame_size = extract_frame_size(contents)
+    feed_frame_path = write_feed_frame(source_id, contents)
 
     if not policy.get("controls", {}).get("detection_enabled", True):
         result = {
@@ -317,8 +395,18 @@ async def analyze(file: UploadFile = File(...)) -> dict:
             "policy_update": None,
             "frame": frame_size,
             "runtime": detector.describe_runtime(policy_engine.get_policy()),
+            "feed": {"id": source_id, "name": source_name, "live": live_source},
         }
         app.state.latest_result = result
+        update_feed_state(
+            app.state.feeds,
+            source_id=source_id,
+            source_name=source_name,
+            live_source=live_source,
+            frame_path=str(feed_frame_path),
+            frame_size=frame_size,
+            result=result,
+        )
         memory_store.log("system", "Detection skipped because controls disabled")
         return result
 
@@ -353,7 +441,7 @@ async def analyze(file: UploadFile = File(...)) -> dict:
         detections=detections,
         event=event,
         expert_decision=expert_decision,
-        source=file.filename or "frame.jpg",
+        source=source_id or file.filename or "frame.jpg",
     )
 
     policy_update = agent_loop.process(record, expert_decision)
@@ -368,8 +456,18 @@ async def analyze(file: UploadFile = File(...)) -> dict:
         "policy_update": policy_update,
         "frame": frame_size,
         "runtime": detector.describe_runtime(policy_engine.get_policy()),
+        "feed": {"id": source_id, "name": source_name, "live": live_source},
     }
     app.state.latest_result = result
+    update_feed_state(
+        app.state.feeds,
+        source_id=source_id,
+        source_name=source_name,
+        live_source=live_source,
+        frame_path=str(feed_frame_path),
+        frame_size=frame_size,
+        result=result,
+    )
     return result
 
 
@@ -379,6 +477,77 @@ def extract_frame_size(image_bytes: bytes) -> dict:
         "width": image.width,
         "height": image.height,
     }
+
+
+def write_feed_frame(source_id: str, image_bytes: bytes) -> Path:
+    FEEDS_DIR.mkdir(parents=True, exist_ok=True)
+    safe_id = sanitize_feed_id(source_id)
+    frame_path = FEEDS_DIR / f"{safe_id}.jpg"
+    frame_path.write_bytes(image_bytes)
+    return frame_path
+
+
+def sanitize_feed_id(feed_id: str) -> str:
+    cleaned = "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in (feed_id or "default"))
+    return cleaned or "default"
+
+
+def update_feed_state(
+    feeds: dict,
+    *,
+    source_id: str,
+    source_name: str,
+    live_source: bool,
+    frame_path: str,
+    frame_size: dict,
+    result: dict,
+) -> None:
+    feed_key = sanitize_feed_id(source_id)
+    feed = feeds.get(feed_key, {})
+    feed.update(
+        {
+            "id": feed_key,
+            "source_id": source_id,
+            "name": source_name,
+            "live": live_source,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "frame_path": frame_path,
+            "frame_size": frame_size,
+            "result": result,
+            "frame_url": f"/feed-frame/{feed_key}?t={datetime.now(timezone.utc).isoformat()}",
+        }
+    )
+    feeds[feed_key] = feed
+
+
+def list_feed_snapshots(feeds: dict) -> list[dict]:
+    items = []
+    for feed in feeds.values():
+        result = feed.get("result") or {}
+        items.append(
+            {
+                "id": feed.get("id"),
+                "source_id": feed.get("source_id"),
+                "name": feed.get("name"),
+                "live": feed.get("live", True),
+                "updated_at": feed.get("updated_at"),
+                "frame_url": feed.get("frame_url"),
+                "frame": feed.get("frame_size"),
+                "detections": result.get("detections", []),
+                "event": result.get("event", {}),
+                "expert": result.get("expert", {}),
+            }
+        )
+    items.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+    return items
+
+
+def resolve_chat_result(app_state, feed_id: str | None) -> dict | None:
+    if feed_id:
+        feed = app_state.feeds.get(feed_id) or app_state.feeds.get(sanitize_feed_id(feed_id))
+        if feed:
+            return feed.get("result")
+    return app_state.latest_result
 
 
 def _analyze_video_bytes(

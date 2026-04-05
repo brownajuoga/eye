@@ -1,8 +1,8 @@
-mode: balanced
+mode: performance
 controls:
   detection_enabled: true
   auto_mode: true
-  confidence_threshold: 0.35
+  confidence_threshold: 0.27
   iou_threshold: 0.5
 model:
   default: yolov8n.pt
@@ -10,7 +10,7 @@ model:
   balanced: yolov8n.pt
   performance: yolov8n.pt
   custom: /home/aabrown/me/eye/eye/ai_server/yolo11n.pt
-  confidence_threshold: 0.35
+  confidence_threshold: 0.27
 expert:
   backend: mock
   ollama_model: llava:7b
@@ -18,6 +18,11 @@ expert:
   max_retries: 2
   timeout_seconds: 20
   task_profile: general
+  mission: Monitor the scene, reason about meaningful activity, and adapt system behavior
+    when patterns emerge.
+  operator_instructions: ''
+  active_task: Autonomously monitor the environment while staying controllable by
+    the user.
 memory:
   max_events: 500
   recent_limit: 10
@@ -48,7 +53,7 @@ automation_rules:
   enabled: true
 rules:
   require_person: false
-  min_confidence: 0.29
+  min_confidence: 0.21
   min_watch_matches: 1
   always_analyze: false
   alert_on_repeated_labels: 3

@@ -84,6 +84,9 @@ class EyeApiClient {
         'max_retries': expert.maxRetries,
         'timeout_seconds': expert.timeoutSeconds,
         'task_profile': expert.taskProfile,
+        'mission': expert.mission,
+        'operator_instructions': expert.operatorInstructions,
+        'active_task': expert.activeTask,
       }),
     );
     _ensureSuccess(response);
@@ -146,6 +149,19 @@ class EyeApiClient {
       ..files.add(http.MultipartFile.fromBytes('file', file.bytes!, filename: file.name));
     final streamed = await request.send();
     final response = await http.Response.fromStream(streamed);
+    _ensureSuccess(response);
+    return fetchDashboard();
+  }
+
+  Future<DashboardSnapshot> sendChatMessage(String message, {String? feedId}) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/chat/message'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'message': message,
+        if (feedId != null && feedId.isNotEmpty) 'feed_id': feedId,
+      }),
+    );
     _ensureSuccess(response);
     return fetchDashboard();
   }

@@ -326,7 +326,13 @@ func runSession(cfg SessionConfig, sourceInput string, sessionIndex int) error {
 				}
 				defer buf.Close()
 
-				result, err := sendBytesToAI(cfg.APIURL, buf.GetBytes())
+				result, err := sendBytesToAI(
+					cfg.APIURL,
+					buf.GetBytes(),
+					sessionFeedID(sourceInput, sessionIndex),
+					windowTitle,
+					src.IsLive(),
+				)
 				if err != nil {
 					logLine(cfg, "error", sourceInput, map[string]any{"message": "AI analyze failed", "error": err.Error()})
 					return
@@ -430,7 +436,7 @@ func aiServerReachable(apiURL string) bool {
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
-func sendBytesToAI(apiURL string, imgBytes []byte) (AnalyzeResponse, error) {
+func sendBytesToAI(apiURL string, imgBytes []byte, sourceID string, sourceName string, liveSource bool) (AnalyzeResponse, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	part, err := writer.CreateFormFile("file", "frame.jpg")
@@ -438,6 +444,15 @@ func sendBytesToAI(apiURL string, imgBytes []byte) (AnalyzeResponse, error) {
 		return AnalyzeResponse{}, err
 	}
 	if _, err := part.Write(imgBytes); err != nil {
+		return AnalyzeResponse{}, err
+	}
+	if err := writer.WriteField("source_id", sourceID); err != nil {
+		return AnalyzeResponse{}, err
+	}
+	if err := writer.WriteField("source_name", sourceName); err != nil {
+		return AnalyzeResponse{}, err
+	}
+	if err := writer.WriteField("live_source", fmt.Sprintf("%t", liveSource)); err != nil {
 		return AnalyzeResponse{}, err
 	}
 	if err := writer.Close(); err != nil {
@@ -460,6 +475,14 @@ func sendBytesToAI(apiURL string, imgBytes []byte) (AnalyzeResponse, error) {
 		return AnalyzeResponse{}, fmt.Errorf("decode analyze response: %w", err)
 	}
 	return result, nil
+}
+
+func sessionFeedID(sourceInput string, sessionIndex int) string {
+	base := sanitizeFileToken(sourceInput)
+	if base == "" {
+		base = fmt.Sprintf("feed_%d", sessionIndex)
+	}
+	return base
 }
 
 func drawOverlays(frame *gocv.Mat, boxes []Box) {

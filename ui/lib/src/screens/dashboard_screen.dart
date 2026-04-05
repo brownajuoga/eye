@@ -4,7 +4,9 @@ import '../models/app_models.dart';
 import '../state/dashboard_controller.dart';
 import '../widgets/control_panel.dart';
 import '../widgets/capabilities_panel.dart';
+import '../widgets/chat_panel.dart';
 import '../widgets/expert_panel.dart';
+import '../widgets/feeds_panel.dart';
 import '../widgets/live_feed_panel.dart';
 import '../widgets/logs_panel.dart';
 import '../widgets/model_manager_panel.dart';
@@ -153,6 +155,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   onActivate: (path) => controller.activateModel(path),
                                   onUpload: controller.uploadModel,
                                 ),
+                              AppSection.feeds => FeedsPanel(
+                                  feeds: snapshot?.feeds ?? const [],
+                                ),
+                              AppSection.chat => ChatPanel(
+                                  messages: snapshot?.chatHistory ?? const [],
+                                  feeds: snapshot?.feeds ?? const [],
+                                  onSend: controller.sendChatMessage,
+                                ),
                               AppSection.controls => ControlPanel(
                                   controls: controlState,
                                   onChanged: controller.saveControls,
@@ -190,6 +200,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String sectionTitle(AppSection section) {
     return switch (section) {
       AppSection.dashboard => 'System Dashboard',
+      AppSection.feeds => 'Feed Monitor',
+      AppSection.chat => 'Expert Chat',
       AppSection.models => 'Model Manager',
       AppSection.controls => 'Control Panel',
       AppSection.expert => 'Expert Controller',

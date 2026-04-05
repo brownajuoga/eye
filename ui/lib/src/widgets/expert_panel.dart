@@ -29,6 +29,9 @@ class _ExpertPanelState extends State<ExpertPanel> {
   late TextEditingController transformersController;
   late TextEditingController retriesController;
   late TextEditingController timeoutController;
+  late TextEditingController missionController;
+  late TextEditingController instructionsController;
+  late TextEditingController taskController;
 
   @override
   void initState() {
@@ -40,6 +43,9 @@ class _ExpertPanelState extends State<ExpertPanel> {
     transformersController = TextEditingController(text: widget.expert.transformersModel);
     retriesController = TextEditingController(text: widget.expert.maxRetries.toString());
     timeoutController = TextEditingController(text: widget.expert.timeoutSeconds.toString());
+    missionController = TextEditingController(text: widget.expert.mission);
+    instructionsController = TextEditingController(text: widget.expert.operatorInstructions);
+    taskController = TextEditingController(text: widget.expert.activeTask);
   }
 
   @override
@@ -52,6 +58,9 @@ class _ExpertPanelState extends State<ExpertPanel> {
     transformersController.text = widget.expert.transformersModel;
     retriesController.text = widget.expert.maxRetries.toString();
     timeoutController.text = widget.expert.timeoutSeconds.toString();
+    missionController.text = widget.expert.mission;
+    instructionsController.text = widget.expert.operatorInstructions;
+    taskController.text = widget.expert.activeTask;
   }
 
   @override
@@ -62,6 +71,9 @@ class _ExpertPanelState extends State<ExpertPanel> {
     transformersController.dispose();
     retriesController.dispose();
     timeoutController.dispose();
+    missionController.dispose();
+    instructionsController.dispose();
+    taskController.dispose();
     super.dispose();
   }
 
@@ -112,6 +124,27 @@ class _ExpertPanelState extends State<ExpertPanel> {
             controller: transformersController,
             decoration: const InputDecoration(labelText: 'Transformers Model'),
             onChanged: (value) => expert = expert.copyWith(transformersModel: value),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: missionController,
+            maxLines: 2,
+            decoration: const InputDecoration(labelText: 'Mission'),
+            onChanged: (value) => expert = expert.copyWith(mission: value),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: taskController,
+            maxLines: 2,
+            decoration: const InputDecoration(labelText: 'Active Task'),
+            onChanged: (value) => expert = expert.copyWith(activeTask: value),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: instructionsController,
+            maxLines: 3,
+            decoration: const InputDecoration(labelText: 'Operator Instructions'),
+            onChanged: (value) => expert = expert.copyWith(operatorInstructions: value),
           ),
           const SizedBox(height: 16),
           Row(
@@ -169,6 +202,9 @@ class _ExpertPanelState extends State<ExpertPanel> {
                     transformersModel: transformersController.text,
                     maxRetries: int.tryParse(retriesController.text) ?? expert.maxRetries,
                     timeoutSeconds: int.tryParse(timeoutController.text) ?? expert.timeoutSeconds,
+                    mission: missionController.text,
+                    operatorInstructions: instructionsController.text,
+                    activeTask: taskController.text,
                   ),
                 ),
                 child: const Text('Save Expert'),

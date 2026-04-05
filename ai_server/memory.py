@@ -73,6 +73,40 @@ class MemoryStore:
             counts.update(item.get("label") for item in event.get("detections", []))
         return dict(counts)
 
+    def find_events(
+        self,
+        *,
+        labels: list[str] | None = None,
+        source: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        wanted_labels = {label.strip().lower() for label in (labels or []) if label.strip()}
+        with self._lock:
+            matches: list[dict[str, Any]] = []
+            for event in reversed(self._events):
+                if source and str(event.get("source")) != source:
+                    continue
+                event_labels = {
+                    str(item.get("label", "")).strip().lower()
+                    for item in event.get("detections", [])
+                    if item.get("label")
+                }
+                if wanted_labels and not wanted_labels.intersection(event_labels):
+                    continue
+                matches.append(deepcopy(event))
+                if len(matches) >= limit:
+                    break
+        matches.reverse()
+        return matches
+
+    def first_seen(self, label: str, *, source: str | None = None) -> dict[str, Any] | None:
+        events = self.find_events(labels=[label], source=source, limit=self.max_events)
+        return events[0] if events else None
+
+    def last_seen(self, label: str, *, source: str | None = None) -> dict[str, Any] | None:
+        events = self.find_events(labels=[label], source=source, limit=1)
+        return events[-1] if events else None
+
     def size(self) -> int:
         with self._lock:
             return len(self._events)

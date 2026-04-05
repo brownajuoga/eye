@@ -23,6 +23,7 @@ class AgentLoop:
 
         add_watch_for = list(expert_decision.get("update_watch_for", []))
         rule_updates: dict[str, Any] = {}
+        control_patch = expert_decision.get("control") if isinstance(expert_decision.get("control"), dict) else {}
 
         if label_counts.get("bottle", 0) >= repeated_threshold:
             for label in ("hand", "bag", "bottle"):
@@ -39,5 +40,6 @@ class AgentLoop:
 
         return self.policy_engine.update_policy(
             add_watch_for=add_watch_for,
+            set_mode=control_patch.get("mode") if isinstance(control_patch.get("mode"), str) else None,
             rule_updates=rule_updates or None,
         )

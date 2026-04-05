@@ -32,6 +32,9 @@ DEFAULT_POLICY = {
         "max_retries": 2,
         "timeout_seconds": 20,
         "task_profile": "general",
+        "mission": "Monitor the scene, reason about meaningful activity, and adapt system behavior when patterns emerge.",
+        "operator_instructions": "",
+        "active_task": "Autonomously monitor the environment while staying controllable by the user.",
     },
     "memory": {
         "max_events": 500,
@@ -227,6 +230,19 @@ class PolicyEngine:
         expert["max_retries"] = int(expert.get("max_retries", 2))
         expert["timeout_seconds"] = int(expert.get("timeout_seconds", 20))
         expert["task_profile"] = str(expert.get("task_profile", "general"))
+        expert["mission"] = str(
+            expert.get(
+                "mission",
+                "Monitor the scene, reason about meaningful activity, and adapt system behavior when patterns emerge.",
+            )
+        )
+        expert["operator_instructions"] = str(expert.get("operator_instructions", ""))
+        expert["active_task"] = str(
+            expert.get(
+                "active_task",
+                "Autonomously monitor the environment while staying controllable by the user.",
+            )
+        )
         policy["expert"] = expert
 
         model = dict(policy.get("model", {}))

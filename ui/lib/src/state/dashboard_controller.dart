@@ -88,6 +88,12 @@ class DashboardController extends ChangeNotifier {
     });
   }
 
+  Future<void> sendChatMessage(String message, {String? feedId}) async {
+    await _runBusy(() async {
+      snapshot = await _apiClient.sendChatMessage(message, feedId: feedId);
+    });
+  }
+
   Future<void> _runBusy(Future<void> Function() action) async {
     busy = true;
     notifyListeners();

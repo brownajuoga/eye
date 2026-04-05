@@ -10,6 +10,7 @@ class DashboardController extends ChangeNotifier {
 
   final EyeApiClient _apiClient;
   Timer? _poller;
+  Duration _pollInterval = const Duration(seconds: 2);
 
   DashboardSnapshot? snapshot;
   bool loading = false;
@@ -18,7 +19,7 @@ class DashboardController extends ChangeNotifier {
 
   void start() {
     refresh();
-    _poller ??= Timer.periodic(const Duration(seconds: 2), (_) => refresh(silent: true));
+    _ensurePoller();
   }
 
   @override
@@ -37,6 +38,7 @@ class DashboardController extends ChangeNotifier {
     }
     try {
       snapshot = await _apiClient.fetchDashboard();
+      _updatePollingFromSnapshot();
       error = null;
     } catch (exc) {
       error = exc.toString();
@@ -94,6 +96,12 @@ class DashboardController extends ChangeNotifier {
     });
   }
 
+  Future<void> saveSettings(SettingsConfig settings) async {
+    await _runBusy(() async {
+      snapshot = await _apiClient.updateSettings(settings);
+    });
+  }
+
   Future<void> _runBusy(Future<void> Function() action) async {
     busy = true;
     notifyListeners();
@@ -105,6 +113,22 @@ class DashboardController extends ChangeNotifier {
     } finally {
       busy = false;
       notifyListeners();
+    }
+  }
+
+  void _ensurePoller() {
+    _poller?.cancel();
+    _poller = Timer.periodic(_pollInterval, (_) => refresh(silent: true));
+  }
+
+  void _updatePollingFromSnapshot() {
+    final policy = snapshot?.policy ?? const <String, dynamic>{};
+    final ui = policy['ui'] as Map<String, dynamic>? ?? const {};
+    final seconds = (ui['refresh_interval_seconds'] as num?)?.toDouble() ?? 2.0;
+    final nextInterval = Duration(milliseconds: (seconds * 1000).round().clamp(500, 60000));
+    if (nextInterval != _pollInterval) {
+      _pollInterval = nextInterval;
+      _ensurePoller();
     }
   }
 }

@@ -84,6 +84,7 @@ class SidebarNavigation extends StatelessWidget {
   String label(AppSection section) {
     return switch (section) {
       AppSection.dashboard => 'Dashboard',
+      AppSection.settings => 'Settings',
       AppSection.feeds => 'Feeds',
       AppSection.chat => 'Chat',
       AppSection.models => 'Models',

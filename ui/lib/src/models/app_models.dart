@@ -1,4 +1,4 @@
-enum AppSection { dashboard, feeds, chat, models, controls, expert, videos, logs, rules }
+enum AppSection { dashboard, settings, feeds, chat, models, controls, expert, videos, logs, rules }
 
 class DetectionItem {
   const DetectionItem({
@@ -405,6 +405,183 @@ class VideoAnalysisResult {
       dominantAction: json['dominant_action'] as String? ?? 'ignore',
       aggregatedLabels: (json['aggregated_labels'] as List<dynamic>? ?? const []).map((item) => item.toString()).toList(),
     );
+  }
+}
+
+class SettingsConfig {
+  const SettingsConfig({
+    required this.mode,
+    required this.detectionEnabled,
+    required this.autoMode,
+    required this.confidenceThreshold,
+    required this.iouThreshold,
+    required this.videoSampleIntervalSeconds,
+    required this.videoMaxFrames,
+    required this.refreshIntervalSeconds,
+    required this.defaultFeedId,
+    required this.memoryMaxEvents,
+    required this.memoryRecentLimit,
+    required this.memoryPatternWindow,
+    required this.expertBackend,
+    required this.ollamaModel,
+    required this.transformersModel,
+    required this.maxRetries,
+    required this.timeoutSeconds,
+    required this.taskProfile,
+    required this.mission,
+    required this.operatorInstructions,
+    required this.activeTask,
+    required this.taskRouting,
+  });
+
+  final String mode;
+  final bool detectionEnabled;
+  final bool autoMode;
+  final double confidenceThreshold;
+  final double iouThreshold;
+  final double videoSampleIntervalSeconds;
+  final int videoMaxFrames;
+  final double refreshIntervalSeconds;
+  final String defaultFeedId;
+  final int memoryMaxEvents;
+  final int memoryRecentLimit;
+  final int memoryPatternWindow;
+  final String expertBackend;
+  final String ollamaModel;
+  final String transformersModel;
+  final int maxRetries;
+  final int timeoutSeconds;
+  final String taskProfile;
+  final String mission;
+  final String operatorInstructions;
+  final String activeTask;
+  final Map<String, TaskRouteConfig> taskRouting;
+
+  factory SettingsConfig.fromPolicy(Map<String, dynamic> policy) {
+    final controls = policy['controls'] as Map<String, dynamic>? ?? const {};
+    final video = policy['video_analysis'] as Map<String, dynamic>? ?? const {};
+    final ui = policy['ui'] as Map<String, dynamic>? ?? const {};
+    final memory = policy['memory'] as Map<String, dynamic>? ?? const {};
+    final expert = policy['expert'] as Map<String, dynamic>? ?? const {};
+    final routes = policy['task_routing'] as Map<String, dynamic>? ?? const {};
+    return SettingsConfig(
+      mode: policy['mode'] as String? ?? 'balanced',
+      detectionEnabled: controls['detection_enabled'] as bool? ?? true,
+      autoMode: controls['auto_mode'] as bool? ?? true,
+      confidenceThreshold: (controls['confidence_threshold'] as num?)?.toDouble() ?? 0.35,
+      iouThreshold: (controls['iou_threshold'] as num?)?.toDouble() ?? 0.5,
+      videoSampleIntervalSeconds: (video['sample_interval_seconds'] as num?)?.toDouble() ?? 1.0,
+      videoMaxFrames: video['max_frames'] as int? ?? 8,
+      refreshIntervalSeconds: (ui['refresh_interval_seconds'] as num?)?.toDouble() ?? 2.0,
+      defaultFeedId: ui['default_feed_id'] as String? ?? '',
+      memoryMaxEvents: memory['max_events'] as int? ?? 500,
+      memoryRecentLimit: memory['recent_limit'] as int? ?? 10,
+      memoryPatternWindow: memory['pattern_window'] as int? ?? 25,
+      expertBackend: expert['backend'] as String? ?? 'ollama',
+      ollamaModel: expert['ollama_model'] as String? ?? 'llava:7b-v1.6',
+      transformersModel: expert['transformers_model'] as String? ?? 'vikhyatk/moondream2',
+      maxRetries: expert['max_retries'] as int? ?? 2,
+      timeoutSeconds: expert['timeout_seconds'] as int? ?? 20,
+      taskProfile: expert['task_profile'] as String? ?? 'general',
+      mission: expert['mission'] as String? ?? '',
+      operatorInstructions: expert['operator_instructions'] as String? ?? '',
+      activeTask: expert['active_task'] as String? ?? '',
+      taskRouting: {
+        for (final entry in routes.entries)
+          entry.key: TaskRouteConfig.fromJson(entry.value as Map<String, dynamic>? ?? const {}),
+      },
+    );
+  }
+
+  Map<String, dynamic> toPolicyPatch() {
+    return {
+      'mode': mode,
+      'controls': {
+        'detection_enabled': detectionEnabled,
+        'auto_mode': autoMode,
+        'confidence_threshold': confidenceThreshold,
+        'iou_threshold': iouThreshold,
+      },
+      'rules': {
+        'min_confidence': confidenceThreshold,
+      },
+      'model': {
+        'confidence_threshold': confidenceThreshold,
+      },
+      'video_analysis': {
+        'sample_interval_seconds': videoSampleIntervalSeconds,
+        'max_frames': videoMaxFrames,
+      },
+      'ui': {
+        'refresh_interval_seconds': refreshIntervalSeconds,
+        'default_feed_id': defaultFeedId,
+      },
+      'memory': {
+        'max_events': memoryMaxEvents,
+        'recent_limit': memoryRecentLimit,
+        'pattern_window': memoryPatternWindow,
+      },
+      'expert': {
+        'backend': expertBackend,
+        'ollama_model': ollamaModel,
+        'transformers_model': transformersModel,
+        'max_retries': maxRetries,
+        'timeout_seconds': timeoutSeconds,
+        'task_profile': taskProfile,
+        'mission': mission,
+        'operator_instructions': operatorInstructions,
+        'active_task': activeTask,
+      },
+      'task_routing': {
+        for (final entry in taskRouting.entries) entry.key: entry.value.toJson(),
+      },
+    };
+  }
+}
+
+class TaskRouteConfig {
+  const TaskRouteConfig({
+    required this.mode,
+    required this.expertBackend,
+    required this.preferredModel,
+    required this.feedStrategy,
+  });
+
+  final String mode;
+  final String expertBackend;
+  final String preferredModel;
+  final String feedStrategy;
+
+  factory TaskRouteConfig.fromJson(Map<String, dynamic> json) {
+    return TaskRouteConfig(
+      mode: json['mode'] as String? ?? 'balanced',
+      expertBackend: json['expert_backend'] as String? ?? 'ollama',
+      preferredModel: json['preferred_model'] as String? ?? 'yolov8n.pt',
+      feedStrategy: json['feed_strategy'] as String? ?? 'latest',
+    );
+  }
+
+  TaskRouteConfig copyWith({
+    String? mode,
+    String? expertBackend,
+    String? preferredModel,
+    String? feedStrategy,
+  }) {
+    return TaskRouteConfig(
+      mode: mode ?? this.mode,
+      expertBackend: expertBackend ?? this.expertBackend,
+      preferredModel: preferredModel ?? this.preferredModel,
+      feedStrategy: feedStrategy ?? this.feedStrategy,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'mode': mode,
+      'expert_backend': expertBackend,
+      'preferred_model': preferredModel,
+      'feed_strategy': feedStrategy,
+    };
   }
 }
 

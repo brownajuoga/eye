@@ -193,6 +193,28 @@ async def experts() -> dict:
     }
 
 
+@app.get("/settings")
+async def settings() -> dict:
+    policy_engine: PolicyEngine = app.state.policy_engine
+    detector: YoloDetector = app.state.detector
+    policy = policy_engine.get_policy()
+    return {
+        "policy": policy,
+        "runtime": detector.describe_runtime(policy),
+        "capabilities": detector.describe_capabilities(policy),
+        "models": detector.list_models(policy),
+    }
+
+
+@app.post("/settings")
+async def update_settings(payload: dict) -> dict:
+    policy_engine: PolicyEngine = app.state.policy_engine
+    memory_store: MemoryStore = app.state.memory_store
+    updated = policy_engine.patch_policy(payload)
+    memory_store.log("system", "Settings updated", payload)
+    return {"policy": updated}
+
+
 @app.post("/experts")
 async def update_experts(payload: dict) -> dict:
     policy_engine: PolicyEngine = app.state.policy_engine

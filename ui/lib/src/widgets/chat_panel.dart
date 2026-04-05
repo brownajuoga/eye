@@ -8,11 +8,13 @@ class ChatPanel extends StatefulWidget {
     super.key,
     required this.messages,
     required this.feeds,
+    required this.defaultFeedId,
     required this.onSend,
   });
 
   final List<ChatMessage> messages;
   final List<FeedSnapshot> feeds;
+  final String defaultFeedId;
   final Future<void> Function(String message, {String? feedId}) onSend;
 
   @override
@@ -27,6 +29,15 @@ class _ChatPanelState extends State<ChatPanel> {
   void initState() {
     super.initState();
     messageController = TextEditingController();
+    selectedFeedId = widget.defaultFeedId;
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (selectedFeedId.isEmpty && widget.defaultFeedId.isNotEmpty) {
+      selectedFeedId = widget.defaultFeedId;
+    }
   }
 
   @override

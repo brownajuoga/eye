@@ -26,8 +26,8 @@ DEFAULT_POLICY = {
         "confidence_threshold": 0.35,
     },
     "expert": {
-        "backend": "mock",
-        "ollama_model": "llava:7b",
+        "backend": "ollama",
+        "ollama_model": "llava:7b-v1.6",
         "transformers_model": "vikhyatk/moondream2",
         "max_retries": 2,
         "timeout_seconds": 20,
@@ -46,6 +46,36 @@ DEFAULT_POLICY = {
     "video_analysis": {
         "sample_interval_seconds": 1.0,
         "max_frames": 8,
+    },
+    "ui": {
+        "refresh_interval_seconds": 2.0,
+        "default_feed_id": "",
+    },
+    "task_routing": {
+        "general_question": {
+            "mode": "balanced",
+            "expert_backend": "ollama",
+            "preferred_model": "yolov8n.pt",
+            "feed_strategy": "latest",
+        },
+        "object_search": {
+            "mode": "performance",
+            "expert_backend": "ollama",
+            "preferred_model": "yolo11n.pt",
+            "feed_strategy": "all_feeds",
+        },
+        "event_time_query": {
+            "mode": "balanced",
+            "expert_backend": "ollama",
+            "preferred_model": "yolov8n.pt",
+            "feed_strategy": "selected",
+        },
+        "resource_switch": {
+            "mode": "balanced",
+            "expert_backend": "ollama",
+            "preferred_model": "yolo11n.pt",
+            "feed_strategy": "latest",
+        },
     },
     "automation_rules": [
         {
@@ -254,6 +284,14 @@ class PolicyEngine:
         video["max_frames"] = int(video.get("max_frames", 8))
         policy["video_analysis"] = video
 
+        ui = dict(policy.get("ui", {}))
+        ui["refresh_interval_seconds"] = float(ui.get("refresh_interval_seconds", 2.0))
+        ui["default_feed_id"] = str(ui.get("default_feed_id", ""))
+        policy["ui"] = ui
+
+        task_routing = dict(policy.get("task_routing", {}))
+        policy["task_routing"] = _normalize_task_routing(task_routing)
+
         rules = dict(policy.get("rules", {}))
         rules["min_confidence"] = float(rules.get("min_confidence", controls["confidence_threshold"]))
         policy["rules"] = rules
@@ -303,4 +341,21 @@ def _normalize_rules(values: Any) -> list[dict[str, Any]]:
                 "enabled": bool(value.get("enabled", True)),
             }
         )
+    return normalized
+
+
+def _normalize_task_routing(values: Any) -> dict[str, dict[str, Any]]:
+    defaults = deepcopy(DEFAULT_POLICY["task_routing"])
+    if not isinstance(values, dict):
+        return defaults
+    normalized = {}
+    for intent, default in defaults.items():
+        raw = values.get(intent, {})
+        route = dict(default)
+        if isinstance(raw, dict):
+            route["mode"] = str(raw.get("mode", default["mode"]))
+            route["expert_backend"] = str(raw.get("expert_backend", default["expert_backend"]))
+            route["preferred_model"] = str(raw.get("preferred_model", default["preferred_model"]))
+            route["feed_strategy"] = str(raw.get("feed_strategy", default["feed_strategy"]))
+        normalized[intent] = route
     return normalized

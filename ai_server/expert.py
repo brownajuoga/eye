@@ -532,18 +532,22 @@ def build_operator_plan(
 ) -> dict[str, Any]:
     text = message.lower()
     labels = extract_candidate_labels(message, policy, latest_result, feeds)
-    selected_feed = next((feed for feed in feeds if feed.get("id") == feed_id), None)
+    default_feed_id = str(policy.get("ui", {}).get("default_feed_id", "")).strip()
+    effective_feed_id = feed_id or default_feed_id or None
+    selected_feed = next((feed for feed in feeds if feed.get("id") == effective_feed_id), None)
     active_model = next((model for model in models if model.get("active")), None)
+    routing_policy = policy.get("task_routing", {})
     plan = {
         "intent": "general_question",
         "summary": "Review the current scene state and answer using available feed and memory context.",
         "task_summary": "",
         "recommendation": "",
         "resources": {
-            "feed": feed_id or (selected_feed or {}).get("id") or "latest",
+            "feed": effective_feed_id or (selected_feed or {}).get("id") or "latest",
             "expert_backend": policy.get("expert", {}).get("backend", "mock"),
             "model": (active_model or {}).get("name") or policy.get("model", {}).get("custom") or policy.get("model", {}).get("default"),
             "mode": policy.get("mode", "balanced"),
+            "feed_strategy": "latest",
         },
         "actions": [],
         "evidence": [],
@@ -605,6 +609,12 @@ def build_operator_plan(
             plan["recommendation"] = "Answer grounded in the latest scene and recent memory."
         else:
             plan["recommendation"] = "No immediate detections are available; answer from recent memory and current policy."
+    route = routing_policy.get(plan["intent"], {})
+    if isinstance(route, dict):
+        plan["resources"]["mode"] = str(route.get("mode", plan["resources"]["mode"]))
+        plan["resources"]["expert_backend"] = str(route.get("expert_backend", plan["resources"]["expert_backend"]))
+        plan["resources"]["model"] = str(route.get("preferred_model", plan["resources"]["model"]))
+        plan["resources"]["feed_strategy"] = str(route.get("feed_strategy", plan["resources"]["feed_strategy"]))
     return plan
 
 

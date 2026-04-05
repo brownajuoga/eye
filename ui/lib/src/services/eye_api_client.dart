@@ -166,6 +166,16 @@ class EyeApiClient {
     return fetchDashboard();
   }
 
+  Future<DashboardSnapshot> updateSettings(SettingsConfig settings) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/settings'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(settings.toPolicyPatch()),
+    );
+    _ensureSuccess(response);
+    return fetchDashboard();
+  }
+
   static void _ensureSuccess(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return;

@@ -12,8 +12,8 @@ model:
   custom: /home/aabrown/me/eye/eye/ai_server/yolo11n.pt
   confidence_threshold: 0.27
 expert:
-  backend: mock
-  ollama_model: llava:7b
+  backend: ollama
+  ollama_model: llava:7b-v1.6
   transformers_model: vikhyatk/moondream2
   max_retries: 2
   timeout_seconds: 20

@@ -12,6 +12,7 @@ import '../widgets/logs_panel.dart';
 import '../widgets/model_manager_panel.dart';
 import '../widgets/rules_panel.dart';
 import '../widgets/sidebar_navigation.dart';
+import '../widgets/settings_panel.dart';
 import '../widgets/stats_panel.dart';
 import '../widgets/video_analysis_panel.dart';
 
@@ -150,6 +151,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                         ),
                                       ],
                                     ),
+                              AppSection.settings => SettingsPanel(
+                                  settings: SettingsConfig.fromPolicy(snapshot?.policy ?? const {}),
+                                  availableFeeds: snapshot?.feeds ?? const [],
+                                  onSave: controller.saveSettings,
+                                ),
                               AppSection.models => ModelManagerPanel(
                                   models: snapshot?.models ?? const [],
                                   onActivate: (path) => controller.activateModel(path),
@@ -161,6 +167,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               AppSection.chat => ChatPanel(
                                   messages: snapshot?.chatHistory ?? const [],
                                   feeds: snapshot?.feeds ?? const [],
+                                  defaultFeedId: SettingsConfig.fromPolicy(snapshot?.policy ?? const {}).defaultFeedId,
                                   onSend: controller.sendChatMessage,
                                 ),
                               AppSection.controls => ControlPanel(
@@ -200,6 +207,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String sectionTitle(AppSection section) {
     return switch (section) {
       AppSection.dashboard => 'System Dashboard',
+      AppSection.settings => 'Settings',
       AppSection.feeds => 'Feed Monitor',
       AppSection.chat => 'Expert Chat',
       AppSection.models => 'Model Manager',

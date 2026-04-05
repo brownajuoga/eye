@@ -11,6 +11,12 @@ import yaml
 
 DEFAULT_POLICY = {
     "mode": "balanced",
+    "controls": {
+        "detection_enabled": True,
+        "auto_mode": True,
+        "confidence_threshold": 0.35,
+        "iou_threshold": 0.5,
+    },
     "model": {
         "default": "yolov8n.pt",
         "lightweight": "yolov8n.pt",
@@ -25,6 +31,7 @@ DEFAULT_POLICY = {
         "transformers_model": "vikhyatk/moondream2",
         "max_retries": 2,
         "timeout_seconds": 20,
+        "task_profile": "general",
     },
     "memory": {
         "max_events": 500,
@@ -33,6 +40,24 @@ DEFAULT_POLICY = {
     },
     "watch_for": ["person", "bag", "backpack", "handbag", "cell phone", "bottle"],
     "ignore": ["chair", "couch", "bed"],
+    "video_analysis": {
+        "sample_interval_seconds": 1.0,
+        "max_frames": 8,
+    },
+    "automation_rules": [
+        {
+            "name": "Person Alert",
+            "condition": "IF person detected with confidence > 0.60",
+            "action": "Create alert and keep balanced mode active",
+            "enabled": True,
+        },
+        {
+            "name": "Idle Optimization",
+            "condition": "IF no objects for 120 seconds",
+            "action": "Reduce analysis frequency and mark system idle",
+            "enabled": True,
+        },
+    ],
     "rules": {
         "require_person": False,
         "min_confidence": 0.35,
@@ -55,6 +80,17 @@ class PolicyEngine:
     def get_policy(self) -> dict[str, Any]:
         self._load()
         with self._lock:
+            return deepcopy(self._policy)
+
+    def patch_policy(self, updates: dict[str, Any]) -> dict[str, Any]:
+        self._load()
+        with self._lock:
+            next_policy = _deep_merge(deepcopy(self._policy), deepcopy(updates))
+            next_policy = self._normalize_policy(next_policy)
+            if next_policy == self._policy:
+                return deepcopy(self._policy)
+            self._write(next_policy)
+            self._policy = next_policy
             return deepcopy(self._policy)
 
     def analyze_event(self, detections: list[dict[str, Any]]) -> dict[str, Any]:
@@ -161,10 +197,7 @@ class PolicyEngine:
                 with self.config_path.open("r", encoding="utf-8") as handle:
                     raw = yaml.safe_load(handle) or {}
 
-            merged = _deep_merge(deepcopy(DEFAULT_POLICY), raw)
-            merged["watch_for"] = _normalize_string_list(merged.get("watch_for"))
-            merged["ignore"] = _normalize_string_list(merged.get("ignore"))
-            merged["mode"] = merged.get("mode", "balanced")
+            merged = self._normalize_policy(_deep_merge(deepcopy(DEFAULT_POLICY), raw))
             self._policy = merged
             self._last_mtime = current_mtime or time.time()
 
@@ -173,6 +206,45 @@ class PolicyEngine:
         with self.config_path.open("w", encoding="utf-8") as handle:
             yaml.safe_dump(policy, handle, sort_keys=False)
         self._last_mtime = self.config_path.stat().st_mtime
+
+    def _normalize_policy(self, policy: dict[str, Any]) -> dict[str, Any]:
+        policy["watch_for"] = _normalize_string_list(policy.get("watch_for"))
+        policy["ignore"] = _normalize_string_list(policy.get("ignore"))
+        policy["mode"] = policy.get("mode", "balanced")
+        policy["automation_rules"] = _normalize_rules(policy.get("automation_rules"))
+
+        controls = dict(policy.get("controls", {}))
+        controls["detection_enabled"] = bool(controls.get("detection_enabled", True))
+        controls["auto_mode"] = bool(controls.get("auto_mode", True))
+        controls["confidence_threshold"] = float(controls.get("confidence_threshold", 0.35))
+        controls["iou_threshold"] = float(controls.get("iou_threshold", 0.5))
+        policy["controls"] = controls
+
+        expert = dict(policy.get("expert", {}))
+        expert["backend"] = str(expert.get("backend", "mock"))
+        expert["ollama_model"] = str(expert.get("ollama_model", "llava:7b"))
+        expert["transformers_model"] = str(expert.get("transformers_model", "vikhyatk/moondream2"))
+        expert["max_retries"] = int(expert.get("max_retries", 2))
+        expert["timeout_seconds"] = int(expert.get("timeout_seconds", 20))
+        expert["task_profile"] = str(expert.get("task_profile", "general"))
+        policy["expert"] = expert
+
+        model = dict(policy.get("model", {}))
+        model["confidence_threshold"] = float(model.get("confidence_threshold", controls["confidence_threshold"]))
+        policy["model"] = model
+
+        video = dict(policy.get("video_analysis", {}))
+        video["sample_interval_seconds"] = float(video.get("sample_interval_seconds", 1.0))
+        video["max_frames"] = int(video.get("max_frames", 8))
+        policy["video_analysis"] = video
+
+        rules = dict(policy.get("rules", {}))
+        rules["min_confidence"] = float(rules.get("min_confidence", controls["confidence_threshold"]))
+        policy["rules"] = rules
+
+        policy["controls"]["confidence_threshold"] = policy["rules"]["min_confidence"]
+        policy["model"]["confidence_threshold"] = policy["rules"]["min_confidence"]
+        return policy
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -192,4 +264,27 @@ def _normalize_string_list(values: Any) -> list[str]:
         item = str(value).strip()
         if item and item not in normalized:
             normalized.append(item)
+    return normalized
+
+
+def _normalize_rules(values: Any) -> list[dict[str, Any]]:
+    if not isinstance(values, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        name = str(value.get("name", "")).strip()
+        condition = str(value.get("condition", "")).strip()
+        action = str(value.get("action", "")).strip()
+        if not (name and condition and action):
+            continue
+        normalized.append(
+            {
+                "name": name,
+                "condition": condition,
+                "action": action,
+                "enabled": bool(value.get("enabled", True)),
+            }
+        )
     return normalized

@@ -11,6 +11,7 @@ class MemoryStore:
     def __init__(self, max_events: int = 500):
         self.max_events = max_events
         self._events: list[dict[str, Any]] = []
+        self._logs: list[dict[str, Any]] = []
         self._lock = threading.RLock()
 
     def store_event(
@@ -32,6 +33,7 @@ class MemoryStore:
             self._events.append(record)
             if len(self._events) > self.max_events:
                 self._events = self._events[-self.max_events:]
+        self.log("event", f"Event stored from {source}", record)
         return deepcopy(record)
 
     def recent(self, limit: int = 10) -> list[dict[str, Any]]:
@@ -74,3 +76,26 @@ class MemoryStore:
     def size(self) -> int:
         with self._lock:
             return len(self._events)
+
+    def latest(self) -> dict[str, Any] | None:
+        with self._lock:
+            if not self._events:
+                return None
+            return deepcopy(self._events[-1])
+
+    def log(self, level: str, message: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": level,
+            "message": message,
+            "data": deepcopy(data) if data else None,
+        }
+        with self._lock:
+            self._logs.append(entry)
+            if len(self._logs) > self.max_events:
+                self._logs = self._logs[-self.max_events:]
+        return deepcopy(entry)
+
+    def logs(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._lock:
+            return deepcopy(self._logs[-limit:])

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import threading
 from typing import Any
 
@@ -59,14 +60,63 @@ class YoloDetector:
     def describe_runtime(self, policy: dict[str, Any]) -> dict[str, Any]:
         selected_mode = select_runtime_mode(policy.get("mode", "balanced"), self._ram_gb)
         selected_model = resolve_model_path(policy, selected_mode)
+        active_backend = "ultralytics" if YOLO is not None else "opencv_hog_fallback"
         return {
             "ram_gb": self._ram_gb,
+            "cpu_count": os.cpu_count() or 0,
             "requested_mode": policy.get("mode", "balanced"),
             "effective_mode": selected_mode,
             "model_path": selected_model,
             "loaded_model_path": self._loaded_model_path,
-            "backend": "ultralytics" if self._loaded_model_path else "opencv_hog_fallback",
+            "backend": active_backend,
+            "resources": detect_resource_snapshot(),
         }
+
+    def describe_capabilities(self, policy: dict[str, Any]) -> dict[str, Any]:
+        active_mode = select_runtime_mode(policy.get("mode", "balanced"), self._ram_gb)
+        return {
+            "input_sources": [
+                "webcam",
+                "video_file",
+                "video_folder",
+                "rtsp_stream",
+                "image_sequence",
+                "multicamera",
+            ],
+            "detection_modules": [
+                "motion_trigger",
+                "yolo_generic",
+                "opencv_hog_fallback",
+            ],
+            "expert_backends": ["mock", "ollama", "transformers"],
+            "supports_live_feed": True,
+            "supports_video_upload": True,
+            "supports_runtime_model_switching": True,
+            "supports_policy_hot_reload": True,
+            "supports_multicamera_sync": True,
+            "tracking_status": "groundwork_ready",
+            "calibration_status": "planned",
+            "active_mode": active_mode,
+            "configured_model": resolve_model_path(policy, active_mode),
+        }
+
+    def list_models(self, policy: dict[str, Any]) -> list[dict[str, Any]]:
+        active_path = resolve_model_path(policy, select_runtime_mode(policy.get("mode", "balanced"), self._ram_gb))
+        candidates = discover_model_files()
+        models: list[dict[str, Any]] = []
+        for path in candidates:
+            file_path = Path(path)
+            models.append(
+                {
+                    "id": str(file_path),
+                    "name": file_path.name,
+                    "path": str(file_path),
+                    "size_bytes": file_path.stat().st_size if file_path.exists() else None,
+                    "format": file_path.suffix.lstrip("."),
+                    "active": str(file_path) == active_path or file_path.name == Path(active_path).name,
+                }
+            )
+        return models
 
     def _get_model(self, policy: dict[str, Any]):
         if YOLO is None:
@@ -218,6 +268,48 @@ def detect_available_ram_gb() -> float:
     except Exception:
         pass
     return 0.0
+
+
+def detect_resource_snapshot() -> dict[str, Any]:
+    resources = {
+        "ram_gb": detect_available_ram_gb(),
+        "cpu_count": os.cpu_count() or 0,
+        "load_avg": None,
+        "disk_free_gb": None,
+    }
+    try:
+        load = os.getloadavg()
+        resources["load_avg"] = [round(item, 2) for item in load]
+    except Exception:
+        pass
+    try:
+        stat = os.statvfs(str(BASE_DIR))
+        free_bytes = stat.f_bavail * stat.f_frsize
+        resources["disk_free_gb"] = round(free_bytes / (1024 * 1024 * 1024), 2)
+    except Exception:
+        pass
+    return resources
+
+
+def discover_model_files() -> list[str]:
+    seen: set[str] = set()
+    models: list[str] = []
+    search_roots = [BASE_DIR, BASE_DIR.parent]
+    for root in search_roots:
+        if not root.exists():
+            continue
+        for candidate in root.rglob("*"):
+            if not candidate.is_file():
+                continue
+            if candidate.suffix.lower() not in {".pt", ".onnx"}:
+                continue
+            candidate_str = str(candidate.resolve())
+            if candidate_str in seen:
+                continue
+            seen.add(candidate_str)
+            models.append(candidate_str)
+    models.sort()
+    return models
 
 
 def dedupe_detections(detections: list[dict[str, Any]]) -> list[dict[str, Any]]:

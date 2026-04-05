@@ -1,10 +1,15 @@
 mode: balanced
+controls:
+  detection_enabled: true
+  auto_mode: true
+  confidence_threshold: 0.35
+  iou_threshold: 0.5
 model:
   default: yolov8n.pt
   lightweight: yolov8n.pt
   balanced: yolov8n.pt
   performance: yolov8n.pt
-  custom: null
+  custom: /home/aabrown/me/eye/eye/ai_server/yolo11n.pt
   confidence_threshold: 0.35
 expert:
   backend: mock
@@ -12,6 +17,7 @@ expert:
   transformers_model: vikhyatk/moondream2
   max_retries: 2
   timeout_seconds: 20
+  task_profile: general
 memory:
   max_events: 500
   recent_limit: 10
@@ -28,9 +34,21 @@ ignore:
 - chair
 - couch
 - bed
+video_analysis:
+  sample_interval_seconds: 1.0
+  max_frames: 8
+automation_rules:
+- name: Person Alert
+  condition: IF person detected with confidence > 0.60
+  action: Create alert and keep balanced mode active
+  enabled: true
+- name: Idle Optimization
+  condition: IF no objects for 120 seconds
+  action: Reduce analysis frequency and mark system idle
+  enabled: true
 rules:
-  require_person: true
-  min_confidence: 0.35
+  require_person: false
+  min_confidence: 0.29
   min_watch_matches: 1
   always_analyze: false
   alert_on_repeated_labels: 3

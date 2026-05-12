@@ -79,6 +79,13 @@ def condition_matches(
     if "watch" in text and "detected" in text and event.get("watch_matches"):
         return confidence_condition_matches(text, detections)
 
+    labels = extract_detected_labels(text)
+    if len(labels) > 1:
+        return all(
+            any(labels_match(label, str(detection.get("label", ""))) for detection in detections)
+            for label in labels
+        ) and confidence_condition_matches(text, detections)
+
     label = extract_detected_label(text)
     if label:
         if label == "object":
@@ -116,14 +123,28 @@ def no_objects_condition_matches(
 
 
 def extract_detected_label(condition: str) -> str:
+    labels = extract_detected_labels(condition)
+    if not labels:
+        return ""
+    return labels[0]
+
+
+def extract_detected_labels(condition: str) -> list[str]:
     match = DETECTED_RE.search(condition)
     if not match:
-        return ""
-    label = match.group(1)
-    for prefix in ("a ", "an ", "the ", "any "):
-        if label.startswith(prefix):
-            label = label[len(prefix):]
-    return normalize_label(label)
+        return []
+    raw = re.sub(r"\bwith\s+confidence\b.*$", "", match.group(1), flags=re.IGNORECASE)
+    raw = raw.replace(",", " and ")
+    labels = []
+    for label in re.split(r"\s+(?:and|or)\s+", raw):
+        label = label.strip()
+        for prefix in ("a ", "an ", "the ", "any "):
+            if label.startswith(prefix):
+                label = label[len(prefix):]
+        normalized = normalize_label(label)
+        if normalized and normalized not in labels:
+            labels.append(normalized)
+    return labels
 
 
 def normalize_label(value: str) -> str:

@@ -1,0 +1,101 @@
+How to run eye
+==============
+
+This project runs as three cooperating pieces:
+
+1. Python FastAPI backend in ai_server
+2. Go Scout capture/motion process in scout
+3. Flutter UI in ui
+
+Recommended terminal layout
+---------------------------
+
+Terminal 1 - start the AI backend:
+
+  cd /home/aabrown/me/eye/eye
+  python3 -m venv .venv
+  . .venv/bin/activate
+  pip install fastapi uvicorn pillow pyyaml python-multipart opencv-python ultralytics
+  python3 ai_server/main.py
+
+The backend should be available at:
+
+  http://127.0.0.1:8080/health
+
+Terminal 2 - run Scout with a camera:
+
+  cd /home/aabrown/me/eye/eye/scout
+  go run . detect -source auto -api-url http://127.0.0.1:8080 -headless
+
+Useful Scout source examples:
+
+  go run . sources
+  go run . detect -source 0 -api-url http://127.0.0.1:8080
+  go run . detect -source /path/to/video.mp4 -api-url http://127.0.0.1:8080 -headless
+  go run . detect -source /path/to/media-folder -api-url http://127.0.0.1:8080 -headless
+  go run . detect -source rtsp://camera/stream -api-url http://127.0.0.1:8080 -headless
+  go run . detect -sources 0,/path/to/video.mp4 -api-url http://127.0.0.1:8080 -headless
+
+Terminal 3 - run the Flutter UI:
+
+  cd /home/aabrown/me/eye/eye/ui
+  flutter pub get
+  flutter run -d linux
+
+For the web UI:
+
+  cd /home/aabrown/me/eye/eye/ui
+  flutter run -d chrome --dart-define=EYE_API_BASE_URL=http://127.0.0.1:8080
+
+What should work
+----------------
+
+- Dashboard shows backend runtime and latest frame after Scout sends a frame.
+- Feed Monitor shows live/recorded sources registered by Scout.
+- Video Analysis > Analyze Video opens a video picker and posts the file to the backend.
+- Video Analysis source chips generate working Scout commands for camera, video file, folder, and RTSP input.
+- Automation Rules run in the realtime path before optional expert review.
+- Expert realtime review is off by default so CPU machines do not continuously run LLM/VLM inference.
+
+Verification commands
+---------------------
+
+Python backend tests:
+
+  cd /home/aabrown/me/eye/eye
+  python3 -m unittest discover tests
+
+Scout build/test:
+
+  cd /home/aabrown/me/eye/eye/scout
+  go test ./...
+
+UI analysis:
+
+  cd /home/aabrown/me/eye/eye/ui
+  flutter analyze
+
+If Scout cannot find a camera
+-----------------------------
+
+Run:
+
+  cd /home/aabrown/me/eye/eye/scout
+  go run . sources
+
+Then use a detected index:
+
+  go run . detect -source 0 -api-url http://127.0.0.1:8080
+
+If you are on WSL, direct webcam access may not be available. Use a video file, a media folder, or an RTSP stream instead.
+
+Integrated surveillance ideas
+-----------------------------
+
+The app now follows the CPU-first pattern from practical surveillance systems:
+
+- YOLO/object detection remains the fast realtime layer.
+- Rule decisions are used before heavyweight reasoning.
+- Retail-style rules cover person plus handbag/bottle interactions.
+- Abnormal-event thinking is represented as configurable automation rules and source-specific review.
+- Optional expert reasoning can be enabled only for important events.

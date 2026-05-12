@@ -87,6 +87,18 @@ DEFAULT_POLICY = {
             "enabled": True,
         },
         {
+            "name": "Retail Concealment Watch",
+            "condition": "IF person and handbag detected with confidence > 0.45",
+            "action": "Create alert for possible concealment and keep performance mode active",
+            "enabled": True,
+        },
+        {
+            "name": "Suspicious Object Handling",
+            "condition": "IF person and bottle detected with confidence > 0.45",
+            "action": "Create alert for item handling review",
+            "enabled": True,
+        },
+        {
             "name": "Idle Optimization",
             "condition": "IF no objects for 120 seconds",
             "action": "Reduce analysis frequency and mark system idle",

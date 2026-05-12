@@ -137,6 +137,27 @@ class PolicyMemoryAgentTests(unittest.TestCase):
         self.assertEqual(alert_decision["source"], "rule_engine")
         self.assertEqual(alert_decision["matched_rules"][0]["name"], "Person Alert")
 
+        concealment_decision = engine.evaluate(
+            detections=[
+                {"label": "person", "confidence": 0.91},
+                {"label": "handbag", "confidence": 0.68},
+            ],
+            event={"important": True, "reason": "Matched watch list"},
+            policy={
+                "automation_rules": [
+                    {
+                        "name": "Retail Concealment Watch",
+                        "condition": "IF person and handbag detected with confidence > 0.45",
+                        "action": "Create alert for possible concealment and keep performance mode active",
+                        "enabled": True,
+                    },
+                ],
+            },
+            memory=[],
+        )
+        self.assertEqual(concealment_decision["action"], "alert")
+        self.assertEqual(concealment_decision["control"], {"mode": "performance"})
+
         idle_decision = engine.evaluate(
             detections=[],
             event={"important": False, "reason": "No important objects detected"},

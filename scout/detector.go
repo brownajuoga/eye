@@ -24,3 +24,7 @@ func (m *MotionDetector) Detect(frame gocv.Mat) bool {
 	movement := gocv.CountNonZero(mask)
 	return movement > m.threshold
 }
+
+func (m *MotionDetector) Close() {
+	m.bgSubtractor.Close()
+}

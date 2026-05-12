@@ -97,6 +97,21 @@ class _ExpertPanelState extends State<ExpertPanel> {
               setState(() => expert = expert.copyWith(backend: value));
             },
           ),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: expert.realtimeEnabled,
+            title: const Text('Realtime Expert Review'),
+            onChanged: (value) => setState(() => expert = expert.copyWith(realtimeEnabled: value)),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: expert.realtimeOnlyImportant,
+            title: const Text('Important Events Only'),
+            onChanged: expert.realtimeEnabled
+                ? (value) => setState(() => expert = expert.copyWith(realtimeOnlyImportant: value))
+                : null,
+          ),
           const SizedBox(height: 16),
           DropdownButtonFormField<String>(
             initialValue: expert.taskProfile,

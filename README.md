@@ -1,10 +1,10 @@
 #  eye
 
-**Event-Driven AI Video Monitoring for Low-Cost Hardware**
+**Event-Driven Vision Monitoring for Low-Cost Hardware**
 
-`eye` is a state-of-the-art, event-driven video analysis system designed to run on modest, low-cost hardware while still delivering intelligent, human-like understanding of video footage.
+`eye` is an event-driven video analysis system designed to run on modest, low-cost hardware while still delivering useful scene awareness.
 
-Instead of streaming video 24/7 or triggering alerts for every shadow or movement, **eye understands context**. Users describe what they are looking for in natural language (for example: *"Alert me if someone takes a bag from the counter"*), and the system only reports events that are *confirmed* by multiple AI stages.
+Instead of running a giant vision-language model on every frame, **eye keeps the realtime path small and fast**. Scout detects motion, YOLO identifies objects, and a deterministic rule engine turns detections into alerts, idle behavior, and model-control decisions. Heavier expert reasoning remains available as an optional review layer for summaries, chat, or selected important events.
 
 The project is optimized for environments where bandwidth, hardware, and cost are real constraints — such as small shops, homes, offices, and kiosks.
 
@@ -19,31 +19,33 @@ Traditional CCTV and motion-detection systems:
 * Depend on expensive cloud subscriptions
 * Waste bandwidth and storage
 
-**eye solves this by filtering noise before running expensive AI models**, using a multi-tier architecture that scales from tiny pixel changes to high-level reasoning.
+**eye solves this by filtering noise before any expensive reasoning runs**, using a small event pipeline that scales from tiny pixel changes to actionable alerts.
 
 ---
 
-##  System Architecture (Three-Tier Intelligence)
+##  System Architecture
 
 | Tier   | Name           | Technology          | Responsibility                                            |
 | ------ | -------------- | ------------------- | --------------------------------------------------------- |
 | Tier 1 | **Scout**      | Go + GoCV (OpenCV)  | Detects tiny visual disturbances with near-zero CPU usage |
-| Tier 2 | **Gatekeeper** | YOLO11 (Python)     | Confirms *what* is moving (person, bag, vehicle, etc.)    |
-| Tier 3 | **Expert**     | LLaVA / Video-LLaVA | Understands *intent* using natural language reasoning     |
+| Tier 2 | **Detector**   | YOLO (Python)       | Confirms *what* is moving (person, bag, vehicle, etc.)    |
+| Tier 3 | **Rule Engine**| Python policy logic | Applies watchlists, thresholds, and automation rules      |
+| Tier 4 | **Expert**     | Optional LLM/VLM    | Runs only when enabled for chat, summaries, or review     |
 
 ### Example Flow
 
 1. Camera detects movement → **Scout** triggers
-2. YOLO11 confirms relevant objects (e.g. *person + bag*)
-3. LLaVA analyzes intent based on the user prompt
-4. User receives a **verified alert**, not raw motion data
+2. YOLO confirms relevant objects (e.g. *person + bag*)
+3. The rule engine evaluates watchlists and automation rules
+4. User receives a fast alert, log entry, or control update
+5. Optional expert reasoning can review selected events asynchronously
 
 ---
 
 ##  Key Features
 
-* 🗣️ **Natural Language Event Definition**
-  Tell the system *what to watch for* — no retraining required.
+* 🧠 **Lightweight Rule Intelligence**
+  Express behaviors such as `IF person detected with confidence > 0.60` without running an LLM in the hot path.
 
 * ⚡ **Edge-Optimized Performance**
   Built in Go for speed, concurrency, and low memory usage.
@@ -65,9 +67,9 @@ Traditional CCTV and motion-detection systems:
 
 ### AI & Vision
 
-* **YOLO11-Nano** – fast object detection on CPU
-* **LLaVA / Video-LLaVA** – high-level reasoning and confirmation
-* **Ollama** (optional) – local LLaVA inference
+* **YOLO Nano models** – fast object detection on CPU
+* **Rule engine** – realtime decision layer for alerts, idle handling, and control changes
+* **Ollama / Transformers** (optional) – expert review when explicitly enabled
 
 ### Communication & Alerts
 
@@ -144,17 +146,17 @@ python main.py
 
 This starts:
 
-* YOLO11 object detection
-* LLaVA reasoning endpoint
+* YOLO object detection
+* The realtime rule engine
+* Optional expert/chat endpoints
 
 ---
 
-## 🎯 Example User Prompts
+## 🎯 Example Automation Rules
 
-* "Alert me if someone reaches over the counter"
-* "Notify me if a bag is removed from the table"
-* "Watch for people entering after 9pm"
-* "Tell me if someone loiters near the door"
+* `IF person detected with confidence > 0.60` → `Create alert and keep balanced mode active`
+* `IF no objects for 120 seconds` → `Reduce analysis frequency and mark system idle`
+* `IF watched object detected` → `Notify operator`
 
 ---
 

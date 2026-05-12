@@ -79,6 +79,8 @@ class EyeApiClient {
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'backend': expert.backend,
+        'realtime_enabled': expert.realtimeEnabled,
+        'realtime_only_important': expert.realtimeOnlyImportant,
         'ollama_model': expert.ollamaModel,
         'transformers_model': expert.transformersModel,
         'max_retries': expert.maxRetries,

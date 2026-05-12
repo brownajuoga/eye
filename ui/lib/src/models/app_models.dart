@@ -305,6 +305,8 @@ class DashboardSnapshot {
 class ExpertSettings {
   const ExpertSettings({
     required this.backend,
+    required this.realtimeEnabled,
+    required this.realtimeOnlyImportant,
     required this.ollamaModel,
     required this.transformersModel,
     required this.maxRetries,
@@ -316,6 +318,8 @@ class ExpertSettings {
   });
 
   final String backend;
+  final bool realtimeEnabled;
+  final bool realtimeOnlyImportant;
   final String ollamaModel;
   final String transformersModel;
   final int maxRetries;
@@ -329,6 +333,8 @@ class ExpertSettings {
     final expert = policy['expert'] as Map<String, dynamic>? ?? const {};
     return ExpertSettings(
       backend: expert['backend'] as String? ?? 'mock',
+      realtimeEnabled: expert['realtime_enabled'] as bool? ?? false,
+      realtimeOnlyImportant: expert['realtime_only_important'] as bool? ?? true,
       ollamaModel: expert['ollama_model'] as String? ?? 'llava:7b',
       transformersModel: expert['transformers_model'] as String? ?? 'vikhyatk/moondream2',
       maxRetries: expert['max_retries'] as int? ?? 2,
@@ -342,6 +348,8 @@ class ExpertSettings {
 
   ExpertSettings copyWith({
     String? backend,
+    bool? realtimeEnabled,
+    bool? realtimeOnlyImportant,
     String? ollamaModel,
     String? transformersModel,
     int? maxRetries,
@@ -353,6 +361,8 @@ class ExpertSettings {
   }) {
     return ExpertSettings(
       backend: backend ?? this.backend,
+      realtimeEnabled: realtimeEnabled ?? this.realtimeEnabled,
+      realtimeOnlyImportant: realtimeOnlyImportant ?? this.realtimeOnlyImportant,
       ollamaModel: ollamaModel ?? this.ollamaModel,
       transformersModel: transformersModel ?? this.transformersModel,
       maxRetries: maxRetries ?? this.maxRetries,
@@ -477,7 +487,7 @@ class SettingsConfig {
       memoryMaxEvents: memory['max_events'] as int? ?? 500,
       memoryRecentLimit: memory['recent_limit'] as int? ?? 10,
       memoryPatternWindow: memory['pattern_window'] as int? ?? 25,
-      expertBackend: expert['backend'] as String? ?? 'ollama',
+      expertBackend: expert['backend'] as String? ?? 'mock',
       ollamaModel: expert['ollama_model'] as String? ?? 'llava:7b-v1.6',
       transformersModel: expert['transformers_model'] as String? ?? 'vikhyatk/moondream2',
       maxRetries: expert['max_retries'] as int? ?? 2,
@@ -555,7 +565,7 @@ class TaskRouteConfig {
   factory TaskRouteConfig.fromJson(Map<String, dynamic> json) {
     return TaskRouteConfig(
       mode: json['mode'] as String? ?? 'balanced',
-      expertBackend: json['expert_backend'] as String? ?? 'ollama',
+      expertBackend: json['expert_backend'] as String? ?? 'mock',
       preferredModel: json['preferred_model'] as String? ?? 'yolov8n.pt',
       feedStrategy: json['feed_strategy'] as String? ?? 'latest',
     );

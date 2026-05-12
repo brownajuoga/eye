@@ -26,7 +26,9 @@ DEFAULT_POLICY = {
         "confidence_threshold": 0.35,
     },
     "expert": {
-        "backend": "ollama",
+        "backend": "mock",
+        "realtime_enabled": False,
+        "realtime_only_important": True,
         "ollama_model": "llava:7b-v1.6",
         "transformers_model": "vikhyatk/moondream2",
         "max_retries": 2,
@@ -54,25 +56,25 @@ DEFAULT_POLICY = {
     "task_routing": {
         "general_question": {
             "mode": "balanced",
-            "expert_backend": "ollama",
+            "expert_backend": "mock",
             "preferred_model": "yolov8n.pt",
             "feed_strategy": "latest",
         },
         "object_search": {
             "mode": "performance",
-            "expert_backend": "ollama",
+            "expert_backend": "mock",
             "preferred_model": "yolo11n.pt",
             "feed_strategy": "all_feeds",
         },
         "event_time_query": {
             "mode": "balanced",
-            "expert_backend": "ollama",
+            "expert_backend": "mock",
             "preferred_model": "yolov8n.pt",
             "feed_strategy": "selected",
         },
         "resource_switch": {
             "mode": "balanced",
-            "expert_backend": "ollama",
+            "expert_backend": "mock",
             "preferred_model": "yolo11n.pt",
             "feed_strategy": "latest",
         },
@@ -255,6 +257,8 @@ class PolicyEngine:
 
         expert = dict(policy.get("expert", {}))
         expert["backend"] = str(expert.get("backend", "mock"))
+        expert["realtime_enabled"] = bool(expert.get("realtime_enabled", False))
+        expert["realtime_only_important"] = bool(expert.get("realtime_only_important", True))
         expert["ollama_model"] = str(expert.get("ollama_model", "llava:7b"))
         expert["transformers_model"] = str(expert.get("transformers_model", "vikhyatk/moondream2"))
         expert["max_retries"] = int(expert.get("max_retries", 2))

@@ -6,10 +6,8 @@ import threading
 from typing import Any
 
 
-try:
-    from ultralytics import YOLO
-except Exception:  # pragma: no cover - optional dependency path
-    YOLO = None
+YOLO = None
+YOLO_IMPORT_ATTEMPTED = False
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -87,6 +85,7 @@ class YoloDetector:
                 "motion_trigger",
                 "yolo_generic",
                 "opencv_hog_fallback",
+                "rule_engine",
             ],
             "expert_backends": ["mock", "ollama", "transformers"],
             "supports_live_feed": True,
@@ -119,7 +118,8 @@ class YoloDetector:
         return models
 
     def _get_model(self, policy: dict[str, Any]):
-        if YOLO is None:
+        yolo_class = load_yolo_class()
+        if yolo_class is None:
             return None
 
         selected_mode = select_runtime_mode(policy.get("mode", "balanced"), self._ram_gb)
@@ -128,7 +128,7 @@ class YoloDetector:
         with self._lock:
             if self._loaded_model is None or self._loaded_model_path != selected_model:
                 try:
-                    self._loaded_model = YOLO(selected_model)
+                    self._loaded_model = yolo_class(selected_model)
                     self._loaded_model_path = selected_model
                     self._loaded_mode = selected_mode
                 except Exception:
@@ -226,6 +226,20 @@ def load_cv2():
     except Exception as exc:
         raise RuntimeError("opencv-python is required for image decoding and fallback detection") from exc
     return cv2
+
+
+def load_yolo_class():
+    global YOLO, YOLO_IMPORT_ATTEMPTED
+    if YOLO_IMPORT_ATTEMPTED:
+        return YOLO
+    YOLO_IMPORT_ATTEMPTED = True
+    try:
+        from ultralytics import YOLO as yolo_class
+    except Exception:  # pragma: no cover - optional dependency path
+        YOLO = None
+    else:
+        YOLO = yolo_class
+    return YOLO
 
 
 def resolve_model_path(policy: dict[str, Any], mode: str) -> str:

@@ -19,6 +19,7 @@ if str(AI_SERVER_DIR) not in sys.path:
 from agent import AgentLoop
 from memory import MemoryStore
 from policy import PolicyEngine
+from rules import RuleEngine
 
 
 class PolicyMemoryAgentTests(unittest.TestCase):
@@ -106,6 +107,63 @@ class PolicyMemoryAgentTests(unittest.TestCase):
             self.assertIn("hand", update["watch_for"])
             self.assertIn("bottle", update["watch_for"])
             self.assertLessEqual(update["rules"]["min_confidence"], 0.35)
+
+    def test_rule_engine_matches_alert_and_idle_rules(self) -> None:
+        engine = RuleEngine()
+        policy = {
+            "automation_rules": [
+                {
+                    "name": "Person Alert",
+                    "condition": "IF person detected with confidence > 0.60",
+                    "action": "Create alert and keep balanced mode active",
+                    "enabled": True,
+                },
+                {
+                    "name": "Idle Optimization",
+                    "condition": "IF no objects",
+                    "action": "Reduce analysis frequency and mark system idle",
+                    "enabled": True,
+                },
+            ],
+        }
+
+        alert_decision = engine.evaluate(
+            detections=[{"label": "person", "confidence": 0.91}],
+            event={"important": True, "reason": "Matched watch list"},
+            policy=policy,
+            memory=[],
+        )
+        self.assertEqual(alert_decision["action"], "alert")
+        self.assertEqual(alert_decision["source"], "rule_engine")
+        self.assertEqual(alert_decision["matched_rules"][0]["name"], "Person Alert")
+
+        idle_decision = engine.evaluate(
+            detections=[],
+            event={"important": False, "reason": "No important objects detected"},
+            policy=policy,
+            memory=[],
+        )
+        self.assertEqual(idle_decision["action"], "ignore")
+        self.assertEqual(idle_decision["control"], {"mode": "lightweight"})
+
+    def test_agent_applies_rule_engine_control_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "prompts.yaml"
+            config_path.write_text(yaml.safe_dump({"mode": "balanced"}), encoding="utf-8")
+            engine = PolicyEngine(config_path)
+            memory = MemoryStore(max_events=5)
+            agent = AgentLoop(engine, memory)
+            record = memory.store_event(
+                detections=[],
+                event={"important": False, "reason": "idle"},
+                expert_decision={"action": "ignore", "control": {"mode": "lightweight"}},
+                source="unit-test",
+            )
+
+            update = agent.process(record, {"action": "ignore", "control": {"mode": "lightweight"}})
+
+            self.assertIsNotNone(update)
+            self.assertEqual(update["mode"], "lightweight")
 
 
 if __name__ == "__main__":

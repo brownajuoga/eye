@@ -1,18 +1,20 @@
-mode: performance
+mode: balanced
 controls:
   detection_enabled: true
   auto_mode: true
-  confidence_threshold: 0.27
+  confidence_threshold: 0.35
   iou_threshold: 0.5
 model:
   default: yolov8n.pt
   lightweight: yolov8n.pt
   balanced: yolov8n.pt
   performance: yolov8n.pt
-  custom: /home/aabrown/me/eye/eye/ai_server/yolo11n.pt
-  confidence_threshold: 0.27
+  custom: null
+  confidence_threshold: 0.35
 expert:
-  backend: ollama
+  backend: mock
+  realtime_enabled: false
+  realtime_only_important: true
   ollama_model: llava:7b-v1.6
   transformers_model: vikhyatk/moondream2
   max_retries: 2
@@ -53,7 +55,7 @@ automation_rules:
   enabled: true
 rules:
   require_person: false
-  min_confidence: 0.21
+  min_confidence: 0.35
   min_watch_matches: 1
   always_analyze: false
   alert_on_repeated_labels: 3

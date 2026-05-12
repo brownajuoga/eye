@@ -16,6 +16,7 @@ from agent import AgentLoop
 from expert import ExpertSystem
 from memory import MemoryStore
 from policy import PolicyEngine
+from rules import RuleEngine
 from yolo import YoloDetector
 
 
@@ -31,12 +32,14 @@ async def lifespan(app: FastAPI):
     memory_store = MemoryStore(max_events=500)
     detector = YoloDetector()
     expert_system = ExpertSystem()
+    rule_engine = RuleEngine()
     agent_loop = AgentLoop(policy_engine, memory_store)
 
     app.state.policy_engine = policy_engine
     app.state.memory_store = memory_store
     app.state.detector = detector
     app.state.expert_system = expert_system
+    app.state.rule_engine = rule_engine
     app.state.agent_loop = agent_loop
     app.state.latest_result = None
     app.state.latest_frame_updated_at = None
@@ -341,6 +344,7 @@ async def analyze_video(file: UploadFile = File(...)) -> dict:
     detector: YoloDetector = app.state.detector
     expert_system: ExpertSystem = app.state.expert_system
     memory_store: MemoryStore = app.state.memory_store
+    rule_engine: RuleEngine = app.state.rule_engine
 
     policy = policy_engine.get_policy()
     sample_interval = max(0.2, float(policy["video_analysis"].get("sample_interval_seconds", 1.0)))
@@ -350,8 +354,10 @@ async def analyze_video(file: UploadFile = File(...)) -> dict:
         summary = _analyze_video_bytes(
             contents,
             suffix=suffix,
+            policy_engine=policy_engine,
             detector=detector,
             expert_system=expert_system,
+            rule_engine=rule_engine,
             memory_store=memory_store,
             policy=policy,
             sample_interval=sample_interval,
@@ -388,6 +394,7 @@ async def analyze(
     memory_store: MemoryStore = app.state.memory_store
     detector: YoloDetector = app.state.detector
     expert_system: ExpertSystem = app.state.expert_system
+    rule_engine: RuleEngine = app.state.rule_engine
     agent_loop: AgentLoop = app.state.agent_loop
 
     policy = policy_engine.get_policy()
@@ -437,27 +444,36 @@ async def analyze(
     except Exception as exc:
         memory_store.log("error", f"Detection failed: {exc}")
         raise HTTPException(status_code=500, detail=f"Detection failed: {exc}") from exc
-    print("Detections:", detections)
     memory_store.log("info", "Detections processed", {"count": len(detections), "detections": detections})
 
     event = policy_engine.analyze_event(detections)
-    print("Event:", event)
 
     recent_memory = memory_store.recent(limit=policy["memory"]["recent_limit"])
+    rule_decision = rule_engine.evaluate(
+        detections=detections,
+        event=event,
+        policy=policy,
+        memory=recent_memory,
+    )
 
-    try:
-        expert_decision = expert_system.analyze(
-            image_bytes=contents,
-            detections=detections,
-            memory=recent_memory,
-            policy=policy,
-            event=event,
-        )
-    except Exception as exc:
-        memory_store.log("error", f"Expert analysis failed: {exc}")
-        raise HTTPException(status_code=500, detail=f"Expert analysis failed: {exc}") from exc
-    print("Expert:", expert_decision)
-    memory_store.log("decision", "Expert decision produced", expert_decision)
+    if should_consult_expert(policy, event, rule_decision):
+        try:
+            expert_decision = expert_system.analyze(
+                image_bytes=contents,
+                detections=detections,
+                memory=recent_memory,
+                policy=policy,
+                event=event,
+            )
+        except Exception as exc:
+            memory_store.log("error", f"Expert analysis failed: {exc}")
+            raise HTTPException(status_code=500, detail=f"Expert analysis failed: {exc}") from exc
+        expert_decision["rule_decision"] = rule_decision
+        expert_decision.setdefault("source", policy.get("expert", {}).get("backend", "expert"))
+        memory_store.log("decision", "Expert decision produced", expert_decision)
+    else:
+        expert_decision = rule_decision
+        memory_store.log("decision", "Rule decision produced", rule_decision)
 
     record = memory_store.store_event(
         detections=detections,
@@ -468,7 +484,6 @@ async def analyze(
 
     policy_update = agent_loop.process(record, expert_decision)
     if policy_update:
-        print("Policy updated:", policy_update)
         memory_store.log("system", "Policy updated", policy_update)
 
     result = {
@@ -572,12 +587,23 @@ def resolve_chat_result(app_state, feed_id: str | None) -> dict | None:
     return app_state.latest_result
 
 
+def should_consult_expert(policy: dict, event: dict, rule_decision: dict) -> bool:
+    expert_cfg = policy.get("expert", {})
+    if not bool(expert_cfg.get("realtime_enabled", False)):
+        return False
+    if bool(expert_cfg.get("realtime_only_important", True)):
+        return bool(event.get("important") or rule_decision.get("action") == "alert")
+    return True
+
+
 def _analyze_video_bytes(
     video_bytes: bytes,
     *,
     suffix: str,
+    policy_engine: PolicyEngine,
     detector: YoloDetector,
     expert_system: ExpertSystem,
+    rule_engine: RuleEngine,
     memory_store: MemoryStore,
     policy: dict,
     sample_interval: float,
@@ -618,14 +644,26 @@ def _analyze_video_bytes(
         frame_bytes = encoded.tobytes()
         latest_frame = {"width": int(frame.shape[1]), "height": int(frame.shape[0])}
         detections = detector.detect_objects(frame_bytes, policy)
-        event = PolicyEngine(CONFIG_PATH).analyze_event(detections)
-        expert = expert_system.analyze(
-            image_bytes=frame_bytes,
+        event = policy_engine.analyze_event(detections)
+        recent_memory = memory_store.recent(limit=policy["memory"]["recent_limit"])
+        rule_decision = rule_engine.evaluate(
             detections=detections,
-            memory=memory_store.recent(limit=policy["memory"]["recent_limit"]),
-            policy=policy,
             event=event,
+            policy=policy,
+            memory=recent_memory,
         )
+        if should_consult_expert(policy, event, rule_decision):
+            expert = expert_system.analyze(
+                image_bytes=frame_bytes,
+                detections=detections,
+                memory=recent_memory,
+                policy=policy,
+                event=event,
+            )
+            expert["rule_decision"] = rule_decision
+            expert.setdefault("source", policy.get("expert", {}).get("backend", "expert"))
+        else:
+            expert = rule_decision
         detections_summary.append(
             {
                 "frame_index": frame_index,

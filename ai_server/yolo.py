@@ -32,7 +32,13 @@ class YoloDetector:
         if model is None:
             return self._detect_with_fallback(image, threshold)
 
-        results = model(image, verbose=False)
+        # Use ByteTrack for persistent identities and movement paths
+        try:
+            results = model.track(image, persist=True, tracker="bytetrack.yaml", verbose=False)
+        except Exception:
+            # Fallback if tracker config is missing or unsupported model
+            results = model(image, verbose=False)
+
         detections: list[dict[str, Any]] = []
 
         for result in results:
@@ -44,12 +50,16 @@ class YoloDetector:
                 cls = int(box.cls[0])
                 x1, y1, x2, y2 = (int(value) for value in box.xyxy[0].tolist())
                 label = str(model.names.get(cls, str(cls)))
+                
+                track_id = int(box.id[0]) if box.id is not None else None
+                
                 detections.append(
                     {
                         "label": label,
                         "confidence": round(confidence, 3),
                         "box": [x1, y1, x2, y2],
                         "model": self._loaded_model_path,
+                        "track_id": track_id,
                     }
                 )
 

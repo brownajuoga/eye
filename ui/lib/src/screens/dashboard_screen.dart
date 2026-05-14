@@ -118,15 +118,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                         const SizedBox(width: 16),
                                         Expanded(
                                           flex: 2,
-                                          child: Column(
+                                          child: ListView(
                                             children: [
                                               StatsPanel(snapshot: snapshot),
                                               const SizedBox(height: 16),
-                                              Expanded(
+                                              SizedBox(
+                                                height: 300,
                                                 child: CapabilitiesPanel(snapshot: snapshot),
                                               ),
                                               const SizedBox(height: 16),
-                                              Expanded(
+                                              SizedBox(
+                                                height: 400,
                                                 child: LogsPanel(entries: snapshot?.logs ?? const []),
                                               ),
                                             ],
@@ -134,9 +136,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                         ),
                                       ],
                                     )
-                                  : Column(
+                                  : ListView(
                                       children: [
-                                        Expanded(
+                                        SizedBox(
+                                          height: 400,
                                           child: LiveFeedPanel(
                                             latestFrameUrl: snapshot?.latestFrameUrl,
                                             latestResult: snapshot?.latestResult,
@@ -146,7 +149,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                         const SizedBox(height: 16),
                                         StatsPanel(snapshot: snapshot),
                                         const SizedBox(height: 16),
-                                        Expanded(
+                                        SizedBox(
+                                          height: 300,
                                           child: CapabilitiesPanel(snapshot: snapshot),
                                         ),
                                       ],

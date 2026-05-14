@@ -399,6 +399,7 @@ class VideoAnalysisResult {
     required this.framesProcessed,
     required this.dominantAction,
     required this.aggregatedLabels,
+    required this.timeline,
   });
 
   final String filename;
@@ -406,6 +407,7 @@ class VideoAnalysisResult {
   final int framesProcessed;
   final String dominantAction;
   final List<String> aggregatedLabels;
+  final List<Map<String, dynamic>> timeline;
 
   factory VideoAnalysisResult.fromJson(Map<String, dynamic> json) {
     return VideoAnalysisResult(
@@ -414,6 +416,9 @@ class VideoAnalysisResult {
       framesProcessed: json['frames_processed'] as int? ?? 0,
       dominantAction: json['dominant_action'] as String? ?? 'ignore',
       aggregatedLabels: (json['aggregated_labels'] as List<dynamic>? ?? const []).map((item) => item.toString()).toList(),
+      timeline: (json['timeline'] as List<dynamic>? ?? const [])
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList(),
     );
   }
 }

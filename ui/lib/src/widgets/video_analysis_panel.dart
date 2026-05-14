@@ -169,12 +169,59 @@ class _VideoAnalysisPanelState extends State<VideoAnalysisPanel> {
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: const Color(0xFFE1E8E3)),
                   ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  child: ExpansionTile(
+                    tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                     title: Text(item.filename),
                     subtitle: Text(
                       '${item.createdAt}\nFrames: ${item.framesProcessed} | Action: ${item.dominantAction}\nLabels: ${item.aggregatedLabels.join(', ')}',
                     ),
+                    children: [
+                      if (item.timeline.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Text('No timeline data available.'),
+                        )
+                      else
+                        SizedBox(
+                          height: 200,
+                          child: ListView.builder(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: item.timeline.length,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            itemBuilder: (context, index) {
+                              final event = item.timeline[index];
+                              final isAlert = event['expert']?['action'] == 'alert';
+                              return Container(
+                                width: 250,
+                                margin: const EdgeInsets.only(right: 12),
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: isAlert ? const Color(0xFFFDECEA) : const Color(0xFFF5F8F6),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: isAlert ? Colors.red.shade200 : const Color(0xFFD9E0DB)),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('Frame ${event['frame_index']}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                    const SizedBox(height: 4),
+                                    Text('Action: ${event['event']?['action'] ?? 'none'}'),
+                                    const SizedBox(height: 4),
+                                    Expanded(
+                                      child: SingleChildScrollView(
+                                        child: Text(
+                                          event['expert']?['reason'] ?? event['event']?['reason'] ?? 'No reason provided',
+                                          style: const TextStyle(fontSize: 12),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ),

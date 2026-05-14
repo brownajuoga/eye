@@ -42,6 +42,14 @@ class RuleEngine:
             control = {}
 
         confidence = decision_confidence(action, detections, event, matched_rules)
+
+        behavior_action, behavior_reason, behavior_conf = detect_behavior_patterns(detections, memory, policy)
+        if behavior_action:
+            if behavior_action == "alert" and action != "alert":
+                action = "alert"
+            reason = f"{reason} | Behavior: {behavior_reason}" if reason else behavior_reason
+            confidence = max(confidence, behavior_conf)
+
         return {
             "action": action,
             "reason": reason,
@@ -276,3 +284,66 @@ def build_task_summary(
         rule_names = ", ".join(str(rule.get("name", "")).strip() for rule in matched_rules if rule.get("name"))
         return f"Observed {observed} | Rules: {rule_names or 'matched'}"
     return f"Observed {observed} | {event.get('reason', 'No important event')}"
+
+
+def detect_behavior_patterns(
+    current_detections: list[dict[str, Any]],
+    memory: list[dict[str, Any]],
+    policy: dict[str, Any],
+) -> tuple[str | None, str, float]:
+    """
+    Detects complex temporal behavior sequences, such as shoplifting concealment
+    or abnormal events (restricted area, running, falling).
+    """
+    labels = {str(d.get("label", "")).lower() for d in current_detections}
+    
+    # 1. Real-Time Abnormal Events Detection (Running/Falling/Restricted Area)
+    # Using simple heuristic representations:
+    # "falling" or "person falling", "running" or "person running"
+    if any("fall" in l or "down" in l for l in labels):
+        return "alert", "Suspicious abnormal behavior detected: Person falling", 0.90
+    
+    if any("run" in l or "sprint" in l for l in labels):
+        # Only alert if running is matched with restricted area or after-hours
+        # For now, flag it as important
+        return "alert", "Suspicious abnormal behavior detected: Running", 0.85
+        
+    restricted_areas = policy.get("automation_rules", [])
+    for rule in restricted_areas:
+        condition = str(rule.get("condition", "")).lower()
+        if "restricted" in condition or "unauthorized" in condition:
+            if "person" in labels:
+                return "alert", "Restricted area intrusion detected", 0.95
+
+    # 2. Shoplifting / Concealment Sequence Logic
+    # Temporal sequence: Person picks item -> hand -> pocket/bag
+    # This needs historical context from memory.
+    
+    # Check if a person is interacting with a shelf/item right now
+    current_person = "person" in labels
+    current_bag_or_pocket = any("bag" in l or "backpack" in l or "pocket" in l for l in labels)
+    current_item = any("item" in l or "product" in l or "bottle" in l or "box" in l for l in labels)
+
+    if not current_person:
+        return None, "", 0.0
+
+    # Look back in recent memory (last ~2-5 seconds)
+    item_picked_recently = False
+    hand_near_pocket = current_bag_or_pocket
+    
+    # Simplified temporal logic without deep tracking IDs (for edge deployment):
+    for record in reversed(memory[:30]): # Look back roughly 30 frames/events
+        past_dets = record.get("detections", [])
+        past_labels = {str(d.get("label", "")).lower() for d in past_dets}
+        
+        if "item" in past_labels or "product" in past_labels or "bottle" in past_labels:
+            item_picked_recently = True
+            
+        if item_picked_recently and ("bag" in past_labels or "pocket" in past_labels):
+            # Sequence matched over time
+            return "alert", "Suspicious concealment sequence detected (Pre-crime behavior)", 0.88
+
+    if current_item and current_bag_or_pocket:
+        return "alert", "Potential concealment behavior detected", 0.80
+
+    return None, "", 0.0

@@ -41,8 +41,7 @@ class PanelShell extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 20),
-            Flexible(
-              fit: FlexFit.loose,
+            Expanded(
               child: child,
             ),
           ],

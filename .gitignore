@@ -1,72 +1,29 @@
-# --- OS / editor ---
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-*.tmp
-*.log
+# Virtual environments
+.venv/
+venveye/
+venv/
+env/
+.env
 
-.vscode/
-.idea/
-*.iml
-
-# --- Python ---
+# Python caches
 __pycache__/
 *.py[cod]
-*.pyd
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-coverage.xml
-htmlcov/
-
-.venv/
-venv/
-.venveye/
-
-# --- Go ---
-*.exe
-*.dll
+*$py.class
 *.so
-*.dylib
-*.test
-*.out
 
-# Scout outputs/binaries
-scout/scout
-scout/frame.jpg
+# Model files
+*.gguf
+added_tokens.json
+config.json
+generation_config.json
+merges.txt
+versions.txt
 
-# --- Flutter / Dart (UI) ---
-ui/.dart_tool/
-ui/build/
-ui/.flutter-plugins
-ui/.flutter-plugins-dependencies
-ui/.metadata
+# Flutter / Dart
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
 
-# --- App runtime artifacts ---
-ai_server/__pycache__/
-tests/__pycache__/
-
-# YOLO/Ultralytics outputs
-ai_server/runs/
-
-# Latest frames and feed snapshots written at runtime
-ai_server/latest_frame.jpg
-ai_server/feeds/*.jpg
-!ai_server/feeds/default.jpg
-!ai_server/feeds/cam_0.jpg
-!ai_server/feeds/auto.jpg
-
-# Large model weights downloaded locally (keep project configs in git)
-ai_server/weights/
-ai_server/*.pt
-ai_server/*.onnx
-ai_server/*.pth
-
-# If you intentionally commit specific weights, add explicit negations here, e.g.:
-# !ai_server/yolov8n.pt
-# !ai_server/yolo11n.pt
-
-# --- Local notes ---
-pnotes.txt
+# Editor / tools
+.codex

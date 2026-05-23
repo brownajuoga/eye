@@ -57,6 +57,7 @@ class _ChatPanelState extends State<ChatPanel> {
             children: [
               Expanded(
                 child: DropdownButtonFormField<String>(
+                  key: ValueKey(selectedFeedId),
                   initialValue: selectedFeedId,
                   decoration: const InputDecoration(labelText: 'Focus Feed'),
                   items: [

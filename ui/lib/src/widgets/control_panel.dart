@@ -52,6 +52,7 @@ class _ControlPanelState extends State<ControlPanel> {
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey(controls.mode),
             initialValue: controls.mode,
             decoration: const InputDecoration(labelText: 'Runtime Mode'),
             items: const [

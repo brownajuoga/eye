@@ -16,11 +16,12 @@ class SidebarNavigation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 240,
+    return Material(
       color: const Color(0xFF15362F),
-      padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
-      child: Column(
+      child: Container(
+        width: 240,
+        padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
@@ -78,8 +79,9 @@ class SidebarNavigation extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   String label(AppSection section) {
     return switch (section) {

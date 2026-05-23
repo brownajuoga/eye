@@ -116,8 +116,22 @@ class DashboardController extends ChangeNotifier {
     }
   }
 
+  bool _pollingPaused = false;
+
+  void setPollingPaused(bool paused) {
+    if (_pollingPaused == paused) return;
+    _pollingPaused = paused;
+    if (paused) {
+      _poller?.cancel();
+      _poller = null;
+    } else {
+      _ensurePoller();
+    }
+  }
+
   void _ensurePoller() {
     _poller?.cancel();
+    if (_pollingPaused) return;
     _poller = Timer.periodic(_pollInterval, (_) => refresh(silent: true));
   }
 

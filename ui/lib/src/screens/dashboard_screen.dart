@@ -61,7 +61,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               SidebarNavigation(
                 activeSection: section,
-                onSectionChanged: (next) => setState(() => section = next),
+                onSectionChanged: (next) {
+                  setState(() => section = next);
+                  final shouldPause = next == AppSection.settings ||
+                      next == AppSection.rules ||
+                      next == AppSection.expert ||
+                      next == AppSection.controls;
+                  controller.setPollingPaused(shouldPause);
+                },
                 statusText: snapshot == null
                     ? 'Connecting…'
                     : '${snapshot.runtime.effectiveMode} mode\n${snapshot.runtime.backend}',

@@ -21,6 +21,7 @@ class SettingsPanel extends StatefulWidget {
 
 class _SettingsPanelState extends State<SettingsPanel> {
   late SettingsConfig settings;
+  final Map<String, TextEditingController> _routeModelControllers = {};
   late TextEditingController videoIntervalController;
   late TextEditingController videoFramesController;
   late TextEditingController refreshIntervalController;
@@ -71,6 +72,13 @@ class _SettingsPanelState extends State<SettingsPanel> {
     missionController.text = settings.mission;
     instructionsController.text = settings.operatorInstructions;
     taskController.text = settings.activeTask;
+    widget.settings.taskRouting.forEach((intent, route) {
+      if (_routeModelControllers.containsKey(intent)) {
+        if (_routeModelControllers[intent]!.text != route.preferredModel) {
+          _routeModelControllers[intent]!.text = route.preferredModel;
+        }
+      }
+    });
   }
 
   @override
@@ -88,6 +96,9 @@ class _SettingsPanelState extends State<SettingsPanel> {
     missionController.dispose();
     instructionsController.dispose();
     taskController.dispose();
+    for (final controller in _routeModelControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -101,6 +112,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           Text('System', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey(settings.mode),
             initialValue: settings.mode,
             decoration: const InputDecoration(labelText: 'Runtime Mode'),
             items: const [
@@ -130,6 +142,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           _numberField(refreshIntervalController, 'UI Refresh Interval Seconds'),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey(settings.defaultFeedId),
             initialValue: settings.defaultFeedId,
             decoration: const InputDecoration(labelText: 'Default Feed'),
             items: [
@@ -165,6 +178,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           const Text('Recommended for this project: `llava:7b-v1.6` for the best lightweight balance of scene awareness and instruction following on a 16GB machine.'),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey(settings.expertBackend),
             initialValue: settings.expertBackend,
             decoration: const InputDecoration(labelText: 'Expert Backend'),
             items: const [
@@ -193,6 +207,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           _numberField(timeoutController, 'Timeout Seconds'),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey(settings.taskProfile),
             initialValue: settings.taskProfile,
             decoration: const InputDecoration(labelText: 'Task Profile'),
             items: const [
@@ -345,6 +360,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
             Text(intent, style: const TextStyle(fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
+              key: ValueKey('${intent}_mode_${route.mode}'),
               initialValue: route.mode,
               decoration: const InputDecoration(labelText: 'Mode'),
               items: const [
@@ -362,6 +378,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
+              key: ValueKey('${intent}_expert_${route.expertBackend}'),
               initialValue: route.expertBackend,
               decoration: const InputDecoration(labelText: 'Expert Backend'),
               items: const [
@@ -379,7 +396,10 @@ class _SettingsPanelState extends State<SettingsPanel> {
             ),
             const SizedBox(height: 12),
             TextFormField(
-              initialValue: route.preferredModel,
+              controller: _routeModelControllers.putIfAbsent(
+                intent,
+                () => TextEditingController(text: route.preferredModel),
+              ),
               decoration: const InputDecoration(labelText: 'Preferred Model'),
               onChanged: (value) => settings = copy(taskRouting: {
                 ...settings.taskRouting,
@@ -388,6 +408,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
+              key: ValueKey('${intent}_strategy_${route.feedStrategy}'),
               initialValue: route.feedStrategy,
               decoration: const InputDecoration(labelText: 'Feed Strategy'),
               items: const [

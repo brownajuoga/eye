@@ -47,6 +47,7 @@ class _RulesPanelState extends State<RulesPanel> {
         itemBuilder: (context, index) {
           final rule = rules[index];
           return DecoratedBox(
+            key: ValueKey(rule),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(18),

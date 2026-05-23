@@ -44,6 +44,30 @@ ignore:
 video_analysis:
   sample_interval_seconds: 1.0
   max_frames: 8
+ui:
+  refresh_interval_seconds: 2.0
+  default_feed_id: ''
+task_routing:
+  general_question:
+    mode: balanced
+    expert_backend: mock
+    preferred_model: yolov8n.pt
+    feed_strategy: latest
+  object_search:
+    mode: performance
+    expert_backend: mock
+    preferred_model: yolo11n.pt
+    feed_strategy: all_feeds
+  event_time_query:
+    mode: balanced
+    expert_backend: mock
+    preferred_model: yolov8n.pt
+    feed_strategy: selected
+  resource_switch:
+    mode: balanced
+    expert_backend: mock
+    preferred_model: yolo11n.pt
+    feed_strategy: latest
 automation_rules:
 - name: Person Alert
   condition: IF person detected with confidence > 0.60
@@ -63,7 +87,7 @@ automation_rules:
   enabled: true
 rules:
   require_person: false
-  min_confidence: 0.35
+  min_confidence: 0.2
   min_watch_matches: 1
   always_analyze: false
   alert_on_repeated_labels: 3

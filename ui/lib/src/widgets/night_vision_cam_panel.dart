@@ -162,7 +162,30 @@ class _NightVisionCamPanelState extends State<NightVisionCamPanel> with SingleTi
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
+
+          // Live Human & Physical Object Classification Bar
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _countPill(Icons.directions_walk, 'Humans', vision.objectCounts['humans'] ?? vision.occupancyEstimate,
+                    highlight: (vision.objectCounts['humans'] ?? 0) > 0),
+                const SizedBox(width: 8),
+                _countPill(Icons.smartphone, 'Phones', vision.objectCounts['smartphones'] ?? 0),
+                const SizedBox(width: 8),
+                _countPill(Icons.laptop_mac, 'PCs/Laptops', vision.objectCounts['laptops'] ?? 0),
+                const SizedBox(width: 8),
+                _countPill(Icons.router, 'Routers/APs', vision.objectCounts['routers'] ?? vision.activeAps),
+                const SizedBox(width: 8),
+                _countPill(Icons.sensors, 'IoT/Media', vision.objectCounts['iot_devices'] ?? 0),
+                const SizedBox(width: 8),
+                _countPill(Icons.door_front_door, 'Obstructions', vision.objectCounts['obstructions'] ?? 0,
+                    highlight: (vision.objectCounts['obstructions'] ?? 0) > 0),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
 
           // Main Night-Vision CCAM Video Canvas
           Expanded(
@@ -292,7 +315,9 @@ class _NightVisionCamPanelState extends State<NightVisionCamPanel> with SingleTi
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  'Type: ${selected.category.toUpperCase()}${selected.randomized ? " (Randomized MAC)" : ""}\n'
+                                  'Class: ${selected.objectLabel}\n'
+                                  'Vendor: ${selected.vendor.isEmpty ? "Unknown" : selected.vendor}\n'
+                                  'Distance: ~${selected.distanceM.toStringAsFixed(1)} m  |  ${selected.mobility.toUpperCase()}\n'
                                   'ID: ${selected.bssid}\n'
                                   'Channel: ${selected.channel}  |  RSSI: ${selected.rssi} dBm\n'
                                   'Baseline: ${selected.ewmaRssi} dBm  |  Z: ${selected.zScore.toStringAsFixed(2)}\n'
@@ -403,6 +428,32 @@ class _NightVisionCamPanelState extends State<NightVisionCamPanel> with SingleTi
       avatar: Icon(icon, size: 15),
       selected: selected,
       onSelected: (_) => widget.onChangePalette(key),
+    );
+  }
+
+  Widget _countPill(IconData icon, String label, int count, {bool highlight = false}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: highlight ? const Color(0xFF163D2B) : const Color(0xFFF0F4F1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: highlight ? const Color(0xFF2CE680) : const Color(0xFFD5E0D9)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: highlight ? const Color(0xFF56FFB0) : const Color(0xFF1E6F5C)),
+          const SizedBox(width: 6),
+          Text(
+            '$label: $count',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: highlight ? Colors.white : const Color(0xFF183A2F),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -639,6 +690,54 @@ class _NightVisionPainter extends CustomPainter {
       final pt = Offset(normPos.dx * size.width, normPos.dy * size.height);
       final isSelected = selectedKey != null && (ent.rawKey == selectedKey || ent.id == selectedKey);
 
+      if (ent.category == 'human' || ent.objectClass.startsWith('human_')) {
+        final hCol = ent.objectClass == 'human_rapid_motion'
+            ? colors.alert
+            : (ent.objectClass == 'human_moving' ? colors.warn : const Color(0xFF6BFFCE));
+        // Human thermal/night-vision aura
+        canvas.drawCircle(
+          pt,
+          36,
+          Paint()
+            ..shader = RadialGradient(
+              colors: [hCol.withValues(alpha: 0.45), hCol.withValues(alpha: 0.12), Colors.transparent],
+            ).createShader(Rect.fromCircle(center: pt, radius: 36)),
+        );
+        // Human head + torso silhouette
+        canvas.drawCircle(Offset(pt.dx, pt.dy - 9), 5.2, Paint()..color = hCol);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(pt.dx, pt.dy + 5), width: 16, height: 16), const Radius.circular(5)),
+          Paint()..color = hCol.withValues(alpha: 0.88),
+        );
+        _drawBrackets(
+          canvas,
+          Rect.fromCenter(center: pt, width: 38, height: 42),
+          hCol,
+        );
+        _drawLabel(
+          canvas,
+          '[${ent.objectLabel.toUpperCase()}] ~${ent.distanceM.toStringAsFixed(1)}m',
+          Offset(pt.dx + 22, pt.dy - 12),
+          hCol,
+          11,
+        );
+        continue;
+      }
+
+      if (ent.category == 'obstruction' || ent.objectClass == 'physical_obstruction') {
+        final rect = Rect.fromCenter(center: pt, width: 32, height: 18);
+        canvas.drawRect(rect, Paint()..color = colors.warn.withValues(alpha: 0.35));
+        canvas.drawRect(
+          rect,
+          Paint()
+            ..color = colors.warn
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2,
+        );
+        _drawLabel(canvas, '[OBSTRUCTION] ${ent.label}', Offset(pt.dx + 20, pt.dy - 8), colors.warn, 10.5);
+        continue;
+      }
+
       final strength = ((100 + ent.rssi) / 65.0).clamp(0.2, 1.0);
       final blobRadius = 18.0 + strength * 30.0 + ent.disturbance * 24.0;
       final col = ent.threat != null
@@ -684,12 +783,21 @@ class _NightVisionPainter extends CustomPainter {
         );
       }
 
+      final shortTag = switch (ent.objectClass) {
+        'smartphone' => 'PHONE',
+        'laptop_pc' => 'PC',
+        'wifi_ap' => 'AP',
+        'iot_device' => 'IOT',
+        'smart_tv_media' => 'TV',
+        'vehicle_drone' => 'VEH/DRONE',
+        _ => 'DEV',
+      };
       _drawLabel(
         canvas,
-        '${ent.label} (${ent.rssi}dBm)',
+        '[$shortTag] ${ent.label} ~${ent.distanceM.toStringAsFixed(1)}m (${ent.rssi}dBm)',
         Offset(pt.dx + 14, pt.dy - 8),
         col.withValues(alpha: 0.95),
-        10.5,
+        10.2,
       );
     }
 

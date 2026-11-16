@@ -2,11 +2,11 @@ mode: balanced
 controls:
   detection_enabled: true
   auto_mode: true
-  confidence_threshold: 0.35
+  confidence_threshold: 0.2
   iou_threshold: 0.5
 wifi:
   mode: multi
-  vision_palette: night_vision
+  vision_palette: radar
   privacy_mode: false
   tripwire_z_threshold: 2.1
   deauth_rate_threshold: 5
@@ -21,7 +21,7 @@ model:
   balanced: rf_multi_guard.profile
   performance: rf_wids_security.profile
   custom: null
-  confidence_threshold: 0.35
+  confidence_threshold: 0.2
 expert:
   backend: mock
   realtime_enabled: false
@@ -31,11 +31,11 @@ expert:
   max_retries: 2
   timeout_seconds: 20
   task_profile: wifi_security
-  mission: Monitor 2.4 GHz RF spectrum, detect wireless intrusions and physical link disturbances,
-    and support privacy-preserving occupancy sensing.
+  mission: Monitor 2.4 GHz RF spectrum, detect wireless intrusions and physical link
+    disturbances, and support privacy-preserving occupancy sensing.
   operator_instructions: ''
-  active_task: Continuously track Wi-Fi beacons, probes, RSSI link perturbations, and
-    WIDS anomalies across NodeMCU and host interfaces.
+  active_task: Continuously track Wi-Fi beacons, probes, RSSI link perturbations,
+    and WIDS anomalies across NodeMCU and host interfaces.
 memory:
   max_events: 500
   recent_limit: 12
@@ -44,12 +44,43 @@ watch_for:
 - deauth_flood
 - evil_twin
 - rssi_tripwire_motion
+- human_moving
+- human_rapid_motion
+- physical_obstruction
+- vehicle_drone
 - canary_hit
 - beacon_spam
 - channel_congestion
 - probe_burst
 ignore:
 - ctrl
+video_analysis:
+  sample_interval_seconds: 1.0
+  max_frames: 24
+ui:
+  refresh_interval_seconds: 1.5
+  default_feed_id: ''
+task_routing:
+  general_question:
+    mode: balanced
+    expert_backend: mock
+    preferred_model: rf_multi_guard.profile
+    feed_strategy: latest
+  object_search:
+    mode: performance
+    expert_backend: mock
+    preferred_model: rf_wids_security.profile
+    feed_strategy: all_feeds
+  event_time_query:
+    mode: balanced
+    expert_backend: mock
+    preferred_model: rf_multi_guard.profile
+    feed_strategy: selected
+  resource_switch:
+    mode: balanced
+    expert_backend: mock
+    preferred_model: rf_spectrum_survey.profile
+    feed_strategy: latest
 automation_rules:
 - name: Deauth Attack Guard
   condition: IF deauth_flood detected with confidence > 0.65
@@ -77,7 +108,7 @@ automation_rules:
   enabled: true
 rules:
   require_person: false
-  min_confidence: 0.35
+  min_confidence: 0.2
   min_watch_matches: 1
   always_analyze: false
   alert_on_repeated_labels: 3

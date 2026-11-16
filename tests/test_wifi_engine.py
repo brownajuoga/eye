@@ -143,12 +143,21 @@ class WifiEngineAndApiTests(unittest.TestCase):
 
         labels = {d["label"] for d in res["detections"]}
         self.assertIn("rssi_tripwire_motion", labels)
+        self.assertTrue(labels & {"human_moving", "human_rapid_motion"})
+        self.assertIn("smartphone", labels)
+        self.assertIn("wifi_ap", labels)
         self.assertIn("deauth_flood", labels)
         self.assertIn("evil_twin", labels)
         self.assertIn("occupancy_present", labels)
 
         vision = res["vision"]
         self.assertTrue(vision["privacy_mode"])
+        self.assertIn("object_counts", vision)
+        self.assertGreaterEqual(vision["object_counts"]["humans"], 1)
+        self.assertGreaterEqual(vision["object_counts"]["routers"], 1)
+        human_entities = [e for e in vision["entities"] if e["category"] == "human"]
+        self.assertTrue(human_entities)
+        self.assertGreater(human_entities[0]["distance_m"], 0.0)
         client_entities = [e for e in vision["entities"] if e["category"] == "client"]
         self.assertTrue(client_entities)
         self.assertTrue(client_entities[0]["bssid"].startswith("anon:"))

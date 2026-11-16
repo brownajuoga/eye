@@ -10,6 +10,8 @@ import threading
 import time
 from typing import Any
 
+from rf_classifier import classify_rf_emitter, infer_humans_and_obstructions
+
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 420
@@ -181,11 +183,13 @@ class WifiEngine:
                         "angle": angle,
                         "rssi": rssi,
                         "ewma_rssi": float(rssi),
+                        "peak_rssi": float(rssi),
                         "ewma_var": 2.0,
                         "z_score": 0.0,
                         "disturbance": 0.0,
                         "packet_count": 0,
                         "recent_times": deque(maxlen=40),
+                        "subtypes": {subtype},
                         "threat": None,
                         "last_seen": now,
                         "rate": rate,
@@ -198,8 +202,11 @@ class WifiEngine:
                     std = max(1.6, math.sqrt(max(1.0, float(state["ewma_var"]))))
                     z = abs(delta) / std
                     state["ewma_rssi"] = prev_ewma * 0.84 + float(rssi) * 0.16
+                    if z < 1.3:
+                        state["peak_rssi"] = max(float(state.get("peak_rssi", rssi)), float(state["ewma_rssi"]))
                     state["ewma_var"] = float(state["ewma_var"]) * 0.85 + (delta * delta) * 0.15
                     state["z_score"] = round(z, 3)
+                    state.setdefault("subtypes", set()).add(subtype)
                     # Instantaneous disturbance normalized [0..1]
                     inst_dist = min(1.0, (z / max(1.5, tripwire_z_thresh * 1.45)) * 0.75 + (abs(delta) / 18.0) * 0.25)
                     state["disturbance"] = round(max(float(state["disturbance"]) * 0.55, inst_dist), 3)
@@ -380,6 +387,7 @@ class WifiEngine:
                 if recent_hits >= 3:
                     probe_bursts += 1
 
+            cls_info = classify_rf_emitter(st)
             display_label = st["anon_id"] if privacy_mode else (st["ssid"] or st["raw_mac"][-8:])
             entity = {
                 "id": st["anon_id"] if privacy_mode else key,
@@ -389,6 +397,11 @@ class WifiEngine:
                 "ssid": "" if (privacy_mode and st["category"] != "ap") else st["ssid"],
                 "security": st["security"],
                 "category": "threat" if st.get("threat") else st["category"],
+                "object_class": cls_info["object_class"],
+                "object_label": cls_info["object_label"],
+                "vendor": "Anonymized" if privacy_mode else cls_info["vendor"],
+                "distance_m": cls_info["distance_m"],
+                "mobility": cls_info["mobility"],
                 "threat": st.get("threat"),
                 "channel": st["channel"],
                 "rssi": st["rssi"],
@@ -465,6 +478,17 @@ class WifiEngine:
                     best_score = score
                     best_channel = ch
 
+        # Synthesize spatial Human & Physical Obstruction entities + detections
+        inferred_entities, inferred_detections = infer_humans_and_obstructions(
+            entities=entities,
+            links=links,
+            emitters_state=self._emitters,
+            sensor_x=sx,
+            sensor_y=sy,
+            tripwire_z_thresh=tripwire_z_thresh,
+        )
+        all_entities = inferred_entities + entities
+
         # Aggregate domain signals & alerts
         deauth_count_12s = len(self._deauth_times)
         avg_disturbance = round(max(ap_disturbances or [0.0]), 3)
@@ -473,7 +497,7 @@ class WifiEngine:
         # Occupancy estimation combines non-AP active clients + RF disturbance activity
         client_contrib = active_clients
         motion_contrib = 1 if (tripwire_triggered and client_contrib == 0) else 0
-        occ_count = client_contrib + motion_contrib
+        occ_count = max(len([e for e in inferred_entities if e.get("category") == "human"]), client_contrib + motion_contrib)
         density_level = (
             "empty" if occ_count == 0 else ("low" if occ_count <= 2 else ("moderate" if occ_count <= 5 else "crowded"))
         )
@@ -482,7 +506,7 @@ class WifiEngine:
         recent_ssids = {str(st.get("ssid", "")) for st in self._emitters.values() if st.get("ssid")}
         beacon_spam = len(recent_ssids) >= 25
 
-        detections = self._build_detections(
+        detections = inferred_detections + self._build_detections(
             entities=entities,
             tripwire_triggered=tripwire_triggered,
             avg_disturbance=avg_disturbance,
@@ -499,12 +523,28 @@ class WifiEngine:
             wifi_mode=wifi_mode,
         )
 
+        class_counter: Counter[str] = Counter(str(e.get("object_class", "")) for e in all_entities)
+        object_counts = {
+            "humans": class_counter.get("human_moving", 0)
+            + class_counter.get("human_stationary", 0)
+            + class_counter.get("human_rapid_motion", 0),
+            "smartphones": class_counter.get("smartphone", 0),
+            "laptops": class_counter.get("laptop_pc", 0),
+            "routers": class_counter.get("wifi_ap", 0),
+            "iot_devices": class_counter.get("iot_device", 0) + class_counter.get("smart_tv_media", 0),
+            "vehicles_drones": class_counter.get("vehicle_drone", 0),
+            "obstructions": class_counter.get("physical_obstruction", 0),
+        }
+
         alerts: list[dict[str, Any]] = []
         for det in detections:
             if det["label"] in {
                 "deauth_flood",
                 "evil_twin",
                 "rssi_tripwire_motion",
+                "human_moving",
+                "human_rapid_motion",
+                "physical_obstruction",
                 "canary_hit",
                 "beacon_spam",
                 "channel_congestion",
@@ -529,7 +569,7 @@ class WifiEngine:
             "mode": wifi_mode,
             "privacy_mode": privacy_mode,
             "sensor": {"x": sx, "y": sy},
-            "entities": entities[:48],
+            "entities": all_entities[:52],
             "links": links,
             "channels": channels,
             "waveform": list(self._waveform),
@@ -539,6 +579,7 @@ class WifiEngine:
                 "active_clients": active_clients,
                 "active_aps": active_aps,
             },
+            "object_counts": object_counts,
             "metrics": {
                 "total_packets": self._total_packets,
                 "recent_packets_45s": len(self._recent_frames),
@@ -688,9 +729,14 @@ class WifiEngine:
                 }
             )
 
-        # Include top tracked emitters as standard bounding boxes for night-vision overlays
-        for idx, ent in enumerate(entities[:6]):
-            label = "rogue_ap" if ent.get("threat") else ("wifi_ap" if ent["category"] == "ap" else "wifi_client")
+        # Include top tracked emitters with their classified object labels
+        for idx, ent in enumerate(entities[:8]):
+            obj_cls = str(ent.get("object_class") or "")
+            label = (
+                "rogue_ap"
+                if ent.get("threat")
+                else (obj_cls if obj_cls else ("wifi_ap" if ent["category"] == "ap" else "wifi_client"))
+            )
             conf = round(max(0.4, min(0.99, (100 + int(ent["rssi"])) / 70.0)), 3)
             detections.append(
                 {
@@ -699,7 +745,7 @@ class WifiEngine:
                     "box": to_box(float(ent["x"]), float(ent["y"]), 26),
                     "model": f"wifi_{wifi_mode}",
                     "track_id": idx + 1,
-                    "reason": f"{ent['label']} Ch{ent['channel']} {ent['rssi']}dBm",
+                    "reason": f"{ent.get('object_label', label)} ({ent['label']}) ~{ent.get('distance_m', 0)}m Ch{ent['channel']} {ent['rssi']}dBm",
                 }
             )
 

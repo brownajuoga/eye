@@ -35,6 +35,11 @@ class WifiEntity {
     required this.ssid,
     required this.security,
     required this.category,
+    this.objectClass = 'unknown_device',
+    this.objectLabel = 'Wireless Device',
+    this.vendor = '',
+    this.distanceM = 0.0,
+    this.mobility = 'stationary',
     required this.threat,
     required this.channel,
     required this.rssi,
@@ -56,6 +61,11 @@ class WifiEntity {
   final String ssid;
   final String security;
   final String category;
+  final String objectClass;
+  final String objectLabel;
+  final String vendor;
+  final double distanceM;
+  final String mobility;
   final String? threat;
   final int channel;
   final int rssi;
@@ -78,6 +88,11 @@ class WifiEntity {
       ssid: json['ssid'] as String? ?? '',
       security: json['security'] as String? ?? '',
       category: json['category'] as String? ?? 'client',
+      objectClass: json['object_class'] as String? ?? 'unknown_device',
+      objectLabel: json['object_label'] as String? ?? 'Wireless Device',
+      vendor: json['vendor'] as String? ?? '',
+      distanceM: (json['distance_m'] as num?)?.toDouble() ?? 0.0,
+      mobility: json['mobility'] as String? ?? 'stationary',
       threat: json['threat'] as String?,
       channel: (json['channel'] as num?)?.toInt() ?? 6,
       rssi: (json['rssi'] as num?)?.toInt() ?? -70,
@@ -229,6 +244,7 @@ class WifiVisionState {
     required this.recommendedChannel,
     required this.alerts,
     required this.alertBanner,
+    this.objectCounts = const {},
     this.replay,
   });
 
@@ -258,6 +274,7 @@ class WifiVisionState {
   final int recommendedChannel;
   final List<WifiAlertItem> alerts;
   final String alertBanner;
+  final Map<String, int> objectCounts;
   final Map<String, dynamic>? replay;
 
   factory WifiVisionState.empty() {
@@ -332,6 +349,10 @@ class WifiVisionState {
           .map((e) => WifiAlertItem.fromJson(e as Map<String, dynamic>))
           .toList(),
       alertBanner: json['alert_banner'] as String? ?? '',
+      objectCounts: {
+        for (final entry in (json['object_counts'] as Map<String, dynamic>? ?? const {}).entries)
+          entry.key: (entry.value as num?)?.toInt() ?? 0,
+      },
       replay: json['replay'] as Map<String, dynamic>?,
     );
   }

@@ -133,3 +133,4 @@ def render_vision_jpeg(
     buf = BytesIO()
     img.save(buf, format="JPEG", quality=quality)
     return buf.getvalue()
+

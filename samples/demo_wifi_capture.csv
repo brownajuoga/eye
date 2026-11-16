@@ -4,3 +4,4 @@ ts_sec,channel,rssi,frame_type,subtype,sa,bssid,ssid,security,rate
 2.0,11,-61,mgmt,beacon,8a:74:77:60:13:d4,8a:74:77:60:13:d4,Neighbor_Mesh,WPA2,72
 2.2,6,-54,mgmt,probe_req,da:a1:19:11:22:33,ff:ff:ff:ff:ff:ff,Home_Core_AP,,24
 3.0,6,-45,mgmt,beacon,50:14:c1:e3:76:1c,50:14:c1:e3:76:1c,Home_Core_AP,WPA2,130
+

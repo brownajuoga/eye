@@ -39,3 +39,4 @@ pio run -t upload
 * `PRIVACY:1` / `PRIVACY:0` (on-chip FNV-1a MAC anonymization)
 * `SSID:<name>`, `PASS:<password>`, `URL:<http://host:8080/wifi/ingest>`
 * `PORTAL` / `PING`
+

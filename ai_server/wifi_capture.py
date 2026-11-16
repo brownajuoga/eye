@@ -417,3 +417,4 @@ def _safe_float(val: Any, default: float) -> float:
         return float(str(val).strip())
     except (ValueError, TypeError):
         return default
+

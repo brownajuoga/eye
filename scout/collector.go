@@ -559,3 +559,4 @@ func readJsonlBatchFile(path string) ([]RfObservation, error) {
 	}
 	return obs, scanner.Err()
 }
+

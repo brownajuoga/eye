@@ -12,3 +12,4 @@
 {"ts_sec":4.4,"channel":6,"rssi":-49,"frame_type":"mgmt","subtype":"deauth","sa":"de:ad:be:ef:00:99","bssid":"50:14:c1:e3:76:1c","ssid":"Home_Core_AP"}
 {"ts_sec":4.5,"channel":6,"rssi":-48,"frame_type":"mgmt","subtype":"deauth","sa":"de:ad:be:ef:00:99","bssid":"50:14:c1:e3:76:1c","ssid":"Home_Core_AP"}
 {"ts_sec":5.0,"channel":6,"rssi":-38,"frame_type":"mgmt","subtype":"beacon","sa":"66:77:88:99:aa:bb","bssid":"66:77:88:99:aa:bb","ssid":"Home_Core_AP","security":"OPEN","rate":54}
+

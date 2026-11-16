@@ -53,3 +53,4 @@ func TestParseNodeMcuLineAndSimulatorIngest(t *testing.T) {
 		t.Fatalf("expected observations in ingest batch")
 	}
 }
+

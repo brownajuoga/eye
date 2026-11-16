@@ -1,76 +1,35 @@
 package main
 
 import (
-	"bytes"
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"image"
-	"image/color"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
-	"sync/atomic"
+	"syscall"
 	"time"
-
-	"gocv.io/x/gocv"
 )
 
-type Box struct {
-	Label      string  `json:"label"`
-	Box        []int   `json:"box"`
-	Confidence float64 `json:"confidence"`
-	Model      string  `json:"model"`
-}
-
-type AnalyzeResponse struct {
-	Event struct {
-		Important bool     `json:"important"`
-		Reason    string   `json:"reason"`
-		Objects   []string `json:"objects"`
-	} `json:"event"`
-	Detections   []Box           `json:"detections"`
-	Expert       map[string]any  `json:"expert"`
-	PolicyUpdate map[string]any  `json:"policy_update"`
-	Runtime      map[string]any  `json:"runtime"`
-	Frame        map[string]int  `json:"frame"`
-}
-
 type SessionConfig struct {
-	Command         string        `json:"command"`
-	Source          string        `json:"source"`
-	Sources         string        `json:"sources"`
-	APIURL          string        `json:"api_url"`
-	TriggerInterval time.Duration `json:"trigger_interval"`
-	JSONOutput      bool          `json:"json_output"`
-	Headless        bool          `json:"headless"`
-	Overlay         bool          `json:"overlay"`
-	RecordOutput    string        `json:"record_output"`
-	MaxFrames       int           `json:"max_frames"`
-	ConfigPath      string        `json:"config"`
-}
-
-type SessionEvent struct {
-	Timestamp   string         `json:"timestamp"`
-	Source      string         `json:"source"`
-	Motion      bool           `json:"motion"`
-	Detections  []Box          `json:"detections"`
-	Event       map[string]any `json:"event"`
-	Expert      map[string]any `json:"expert"`
-	Policy      map[string]any `json:"policy_update,omitempty"`
-	Runtime     map[string]any `json:"runtime,omitempty"`
-	FramesSeen  int            `json:"frames_seen"`
-	Recorded    bool           `json:"recorded"`
-	Command     string         `json:"command"`
-}
-
-type sessionState struct {
-	boxes []Box
-	mu    sync.RWMutex
+	Command       string        `json:"command"`
+	Source        string        `json:"source"`
+	APIURL        string        `json:"api_url"`
+	Interface     string        `json:"interface"`
+	Device        string        `json:"device"`
+	Baud          int           `json:"baud"`
+	Interval      time.Duration `json:"interval"`
+	ListenAddr    string        `json:"listen"`
+	Scenario      string        `json:"scenario"`
+	JSONOutput    bool          `json:"json_output"`
+	Headless      bool          `json:"headless"`
+	MaxBatches    int           `json:"max_batches"`
+	Channel       int           `json:"channel"`
+	PrivacyMode   bool          `json:"privacy"`
 }
 
 func main() {
@@ -78,14 +37,16 @@ func main() {
 	switch command {
 	case "sources":
 		runSourcesCommand(args)
-	case "detect", "stream", "track", "calibrate":
+	case "nodemcu-cmd":
+		runNodeMcuCommand(args)
+	case "detect", "stream", "track", "bridge", "sim":
 		cfg := parseSessionConfig(command, args)
-		if err := runCommand(cfg); err != nil {
+		if err := runCollector(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "scout %s: %v\n", command, err)
 			os.Exit(1)
 		}
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n", command)
+		fmt.Fprintf(os.Stderr, "unknown command %q (valid: sources, detect, bridge, sim, nodemcu-cmd)\n", command)
 		os.Exit(1)
 	}
 }
@@ -103,471 +64,380 @@ func splitCommand(args []string) (string, []string) {
 func parseSessionConfig(command string, args []string) SessionConfig {
 	fs := flag.NewFlagSet(command, flag.ExitOnError)
 	cfg := SessionConfig{
-		Command:      command,
-		Source:       "auto",
-		APIURL:       envOrDefault("SCOUT_AI_URL", "http://localhost:8080"),
-		Overlay:      true,
-		TriggerInterval: 0,
+		Command:    command,
+		Source:     "auto",
+		APIURL:     envOrDefault("SCOUT_AI_URL", "http://127.0.0.1:8080"),
+		Baud:       115200,
+		Interval:   800 * time.Millisecond,
+		ListenAddr: ":8090",
+		Scenario:   "mixed",
 	}
-	if configPath := extractConfigPath(args); configPath != "" {
-		loaded := loadConfigFile(configPath)
-		cfg = mergeConfig(cfg, loaded)
-		cfg.ConfigPath = configPath
+	if command == "sim" {
+		cfg.Source = "sim"
+	} else if command == "bridge" {
+		cfg.Source = "bridge"
 	}
-	fs.StringVar(&cfg.Source, "source", cfg.Source, "single source: auto, camera index, video file, RTSP URL, or folder")
-	fs.StringVar(&cfg.Sources, "sources", "", "comma-separated list of sources for multicamera/concurrent processing")
+
+	fs.StringVar(&cfg.Source, "source", cfg.Source, "auto, nodemcu, host-wifi, bridge, sim, or path (.pcap/.jsonl)")
 	fs.StringVar(&cfg.APIURL, "api-url", cfg.APIURL, "AI server base URL")
-	fs.DurationVar(&cfg.TriggerInterval, "trigger-interval", 0, "minimum time between AI analyses")
-	fs.BoolVar(&cfg.JSONOutput, "json", false, "emit JSON logs instead of human-readable output")
-	fs.BoolVar(&cfg.Headless, "headless", false, "run without preview windows")
-	fs.BoolVar(&cfg.Overlay, "overlay", true, "draw detection overlays in preview window")
-	fs.StringVar(&cfg.RecordOutput, "record", "", "optional path prefix for saving processed video")
-	fs.IntVar(&cfg.MaxFrames, "max-frames", 0, "optional frame limit for testing or batch runs")
-	fs.StringVar(&cfg.ConfigPath, "config", "", "optional JSON config file to load before flags")
-	fs.Parse(args)
-	if cfg.Command == "calibrate" {
-		if !cfg.JSONOutput {
-			fmt.Println("Calibration pipeline groundwork is ready; using detect flow for source inspection in this build.")
-		}
-		cfg.Command = "detect"
-	}
+	fs.StringVar(&cfg.Interface, "iface", "", "Linux Wi-Fi interface name (e.g. wlp13s0)")
+	fs.StringVar(&cfg.Device, "device", "", "NodeMCU USB serial port (e.g. /dev/ttyUSB0)")
+	fs.IntVar(&cfg.Baud, "baud", cfg.Baud, "Serial baud rate for NodeMCU")
+	fs.DurationVar(&cfg.Interval, "interval", cfg.Interval, "Polling/batching interval")
+	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "Listen address for unplugged NodeMCU bridge mode")
+	fs.StringVar(&cfg.Scenario, "scenario", cfg.Scenario, "Simulator scenario: mixed, motion, deauth, evil_twin, crowd")
+	fs.BoolVar(&cfg.JSONOutput, "json", false, "Emit NDJSON event logs")
+	fs.BoolVar(&cfg.Headless, "headless", false, "Headless terminal mode")
+	fs.IntVar(&cfg.MaxBatches, "max-batches", 0, "Stop after N transmitted batches (0 = run continuously)")
+	fs.IntVar(&cfg.Channel, "channel", 0, "Optional 2.4 GHz channel lock (1-13) for NodeMCU")
+	fs.BoolVar(&cfg.PrivacyMode, "privacy", false, "Enable privacy MAC hashing on NodeMCU")
+	_ = fs.Parse(args)
 	return cfg
-}
-
-func loadConfigFile(path string) SessionConfig {
-	var cfg SessionConfig
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return cfg
-	}
-	_ = json.Unmarshal(data, &cfg)
-	return cfg
-}
-
-func mergeConfig(base SessionConfig, override SessionConfig) SessionConfig {
-	if override.Source != "" {
-		base.Source = override.Source
-	}
-	if override.Sources != "" {
-		base.Sources = override.Sources
-	}
-	if override.APIURL != "" {
-		base.APIURL = override.APIURL
-	}
-	if override.TriggerInterval != 0 {
-		base.TriggerInterval = override.TriggerInterval
-	}
-	if override.JSONOutput {
-		base.JSONOutput = true
-	}
-	if override.Headless {
-		base.Headless = true
-	}
-	base.Overlay = override.Overlay
-	if override.RecordOutput != "" {
-		base.RecordOutput = override.RecordOutput
-	}
-	if override.MaxFrames > 0 {
-		base.MaxFrames = override.MaxFrames
-	}
-	if override.ConfigPath != "" {
-		base.ConfigPath = override.ConfigPath
-	}
-	return base
-}
-
-func extractConfigPath(args []string) string {
-	for i := 0; i < len(args); i++ {
-		if args[i] == "-config" && i+1 < len(args) {
-			return args[i+1]
-		}
-		if strings.HasPrefix(args[i], "-config=") {
-			return strings.TrimPrefix(args[i], "-config=")
-		}
-	}
-	return ""
-}
-
-func runSourcesCommand(args []string) {
-	fs := flag.NewFlagSet("sources", flag.ExitOnError)
-	start := fs.Int("start", 0, "first camera index to probe")
-	end := fs.Int("end", 4, "last camera index to probe")
-	jsonOutput := fs.Bool("json", false, "emit JSON output")
-	fs.Parse(args)
-
-	available := listAvailableCameraIndexes(*start, *end)
-	if *jsonOutput {
-		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
-			"command":   "sources",
-			"available": available,
-		})
-		return
-	}
-	if len(available) == 0 {
-		fmt.Println("No cameras detected in the requested index range.")
-		return
-	}
-	fmt.Printf("Available cameras: %v\n", available)
-}
-
-func runCommand(cfg SessionConfig) error {
-	sources := parseSourceList(cfg)
-	if len(sources) == 0 {
-		sources = []string{cfg.Source}
-	}
-
-	if !aiServerReachable(cfg.APIURL) {
-		logLine(cfg, "system", "", map[string]any{
-			"message": "AI server is not reachable",
-			"api_url": cfg.APIURL,
-		})
-	}
-
-	var wg sync.WaitGroup
-	errCh := make(chan error, len(sources))
-	for index, sourceInput := range sources {
-		wg.Add(1)
-		go func(sessionIndex int, input string) {
-			defer wg.Done()
-			sessionCfg := cfg
-			if err := runSession(sessionCfg, input, sessionIndex); err != nil {
-				errCh <- err
-			}
-		}(index, sourceInput)
-	}
-	wg.Wait()
-	close(errCh)
-
-	for err := range errCh {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func runSession(cfg SessionConfig, sourceInput string, sessionIndex int) error {
-	src, err := openSource(sourceInput)
-	if err != nil {
-		return fmt.Errorf("open source %q: %w", sourceInput, err)
-	}
-	defer src.Close()
-
-	windowTitle := src.WindowTitle()
-	if len(parseSourceList(cfg)) > 1 {
-		windowTitle = fmt.Sprintf("%s [%d]", windowTitle, sessionIndex)
-	}
-
-	logLine(cfg, "system", sourceInput, map[string]any{
-		"message":          "Scout session started",
-		"command":          cfg.Command,
-		"source":           sourceInput,
-		"live":             src.IsLive(),
-		"trigger_interval": effectiveTriggerInterval(cfg, src).String(),
-		"api_url":          cfg.APIURL,
-	})
-
-	var window *gocv.Window
-	if !cfg.Headless {
-		window = gocv.NewWindow(windowTitle)
-		defer window.Close()
-	}
-
-	frame := gocv.NewMat()
-	defer frame.Close()
-
-	detector := NewMotionDetector(1000)
-	defer detector.Close()
-
-	var writer *gocv.VideoWriter
-	var writerPath string
-	state := &sessionState{}
-	triggerInterval := effectiveTriggerInterval(cfg, src)
-	lastTrigger := time.Now().Add(-triggerInterval)
-	var analysisInFlight atomic.Bool
-	framesSeen := 0
-
-	for {
-		if ok := src.Read(&frame); !ok {
-			if src.IsLive() {
-				continue
-			}
-			break
-		}
-		if frame.Empty() {
-			continue
-		}
-		framesSeen++
-		if cfg.MaxFrames > 0 && framesSeen > cfg.MaxFrames {
-			break
-		}
-
-		if writer == nil && cfg.RecordOutput != "" {
-			writerPath = recordOutputPath(cfg.RecordOutput, sourceInput, sessionIndex)
-			_ = os.MkdirAll(filepath.Dir(writerPath), 0o755)
-			writer, err = gocv.VideoWriterFile(writerPath, "MJPG", 20, frame.Cols(), frame.Rows(), true)
-			if err == nil {
-				defer writer.Close()
-			}
-		}
-
-		motion := detector.Detect(frame)
-		shouldAnalyze := (!src.IsLive() || motion) && time.Since(lastTrigger) >= triggerInterval
-		if shouldAnalyze && analysisInFlight.CompareAndSwap(false, true) {
-			tempFrame := frame.Clone()
-			go func(img gocv.Mat, currentFrame int) {
-				defer img.Close()
-				defer analysisInFlight.Store(false)
-
-				buf, err := gocv.IMEncode(".jpg", img)
-				if err != nil {
-					logLine(cfg, "error", sourceInput, map[string]any{"message": "encode frame failed", "error": err.Error()})
-					return
-				}
-				defer buf.Close()
-
-				result, err := sendBytesToAI(
-					cfg.APIURL,
-					buf.GetBytes(),
-					sessionFeedID(sourceInput, sessionIndex),
-					windowTitle,
-					src.IsLive(),
-				)
-				if err != nil {
-					logLine(cfg, "error", sourceInput, map[string]any{"message": "AI analyze failed", "error": err.Error()})
-					return
-				}
-
-				state.mu.Lock()
-				state.boxes = result.Detections
-				state.mu.Unlock()
-
-				event := SessionEvent{
-					Timestamp:  time.Now().UTC().Format(time.RFC3339),
-					Source:     sourceInput,
-					Motion:     motion,
-					Detections: result.Detections,
-					Event: map[string]any{
-						"important": result.Event.Important,
-						"reason":    result.Event.Reason,
-						"objects":   result.Event.Objects,
-					},
-					Expert:     result.Expert,
-					Policy:     result.PolicyUpdate,
-					Runtime:    result.Runtime,
-					FramesSeen: currentFrame,
-					Recorded:   !src.IsLive(),
-					Command:    cfg.Command,
-				}
-				logEvent(cfg, event)
-			}(tempFrame, framesSeen)
-			lastTrigger = time.Now()
-		}
-
-		if cfg.Overlay {
-			drawOverlays(&frame, state.currentBoxes())
-		}
-
-		if writer != nil {
-			writer.Write(frame)
-		}
-
-		if window != nil {
-			window.IMShow(frame)
-			if window.WaitKey(1) >= 0 {
-				break
-			}
-		}
-	}
-
-	if writerPath != "" {
-		logLine(cfg, "system", sourceInput, map[string]any{
-			"message": "Saved processed output",
-			"path":    writerPath,
-		})
-	}
-	return nil
-}
-
-func (s *sessionState) currentBoxes() []Box {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make([]Box, len(s.boxes))
-	copy(out, s.boxes)
-	return out
-}
-
-func effectiveTriggerInterval(cfg SessionConfig, src *source) time.Duration {
-	if cfg.TriggerInterval > 0 {
-		return cfg.TriggerInterval
-	}
-	return src.DefaultTriggerInterval()
-}
-
-func parseSourceList(cfg SessionConfig) []string {
-	raw := cfg.Sources
-	if raw == "" {
-		return nil
-	}
-	var out []string
-	for _, item := range strings.Split(raw, ",") {
-		item = strings.TrimSpace(item)
-		if item != "" {
-			out = append(out, item)
-		}
-	}
-	return out
 }
 
 func envOrDefault(key string, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		return value
+	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
+		return val
 	}
 	return fallback
 }
 
-func aiServerReachable(apiURL string) bool {
-	client := http.Client{Timeout: 750 * time.Millisecond}
-	resp, err := client.Get(strings.TrimRight(apiURL, "/") + "/health")
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
-}
+func runSourcesCommand(args []string) {
+	fs := flag.NewFlagSet("sources", flag.ExitOnError)
+	jsonFlag := fs.Bool("json", false, "Emit JSON")
+	_ = fs.Parse(args)
 
-func sendBytesToAI(apiURL string, imgBytes []byte, sourceID string, sourceName string, liveSource bool) (AnalyzeResponse, error) {
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	part, err := writer.CreateFormFile("file", "frame.jpg")
-	if err != nil {
-		return AnalyzeResponse{}, err
-	}
-	if _, err := part.Write(imgBytes); err != nil {
-		return AnalyzeResponse{}, err
-	}
-	if err := writer.WriteField("source_id", sourceID); err != nil {
-		return AnalyzeResponse{}, err
-	}
-	if err := writer.WriteField("source_name", sourceName); err != nil {
-		return AnalyzeResponse{}, err
-	}
-	if err := writer.WriteField("live_source", fmt.Sprintf("%t", liveSource)); err != nil {
-		return AnalyzeResponse{}, err
-	}
-	if err := writer.Close(); err != nil {
-		return AnalyzeResponse{}, err
-	}
-
-	client := http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Post(strings.TrimRight(apiURL, "/")+"/analyze", writer.FormDataContentType(), body)
-	if err != nil {
-		return AnalyzeResponse{}, err
-	}
-	defer resp.Body.Close()
-	content, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return AnalyzeResponse{}, fmt.Errorf("status %d: %s", resp.StatusCode, string(content))
-	}
-
-	var result AnalyzeResponse
-	if err := json.Unmarshal(content, &result); err != nil {
-		return AnalyzeResponse{}, fmt.Errorf("decode analyze response: %w", err)
-	}
-	return result, nil
-}
-
-func sessionFeedID(sourceInput string, sessionIndex int) string {
-	base := sanitizeFileToken(sourceInput)
-	if base == "" {
-		base = fmt.Sprintf("feed_%d", sessionIndex)
-	}
-	return base
-}
-
-func drawOverlays(frame *gocv.Mat, boxes []Box) {
-	for _, b := range boxes {
-		if len(b.Box) != 4 {
-			continue
-		}
-		rect := image.Rect(b.Box[0], b.Box[1], b.Box[2], b.Box[3])
-		gocv.Rectangle(frame, rect, color.RGBA{0, 255, 0, 0}, 3)
-		label := b.Label
-		if b.Confidence > 0 {
-			label = fmt.Sprintf("%s %.0f%%", b.Label, b.Confidence*100)
-		}
-		gocv.PutText(frame, label, image.Pt(b.Box[0], maxInt(20, b.Box[1]-10)),
-			gocv.FontHersheyPlain, 1.6, color.RGBA{0, 255, 0, 0}, 2)
-	}
-}
-
-func recordOutputPath(prefix string, sourceInput string, sessionIndex int) string {
-	if strings.HasSuffix(strings.ToLower(prefix), ".avi") || strings.HasSuffix(strings.ToLower(prefix), ".mp4") {
-		return prefix
-	}
-	base := sanitizeFileToken(sourceInput)
-	if base == "" {
-		base = fmt.Sprintf("source_%d", sessionIndex)
-	}
-	return filepath.Join(prefix, base+".avi")
-}
-
-func sanitizeFileToken(input string) string {
-	input = strings.TrimSpace(input)
-	input = filepath.Base(input)
-	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", " ", "_")
-	return replacer.Replace(input)
-}
-
-func logEvent(cfg SessionConfig, event SessionEvent) {
-	if cfg.JSONOutput {
-		_ = json.NewEncoder(os.Stdout).Encode(event)
+	discovered := discoverSources()
+	if *jsonFlag {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(discovered)
 		return
 	}
-
-	expertAction := fmt.Sprintf("%v", event.Expert["action"])
-	fmt.Printf(
-		"[%s] source=%s motion=%t detections=%d important=%t expert=%s reason=%v\n",
-		event.Timestamp,
-		event.Source,
-		event.Motion,
-		len(event.Detections),
-		event.Event["important"],
-		expertAction,
-		event.Event["reason"],
-	)
+	fmt.Printf("Recommended source: %s\n", discovered.Recommended)
+	fmt.Printf("NodeMCU serial ports: %v\n", discovered.SerialPorts)
+	fmt.Printf("Host Wi-Fi interfaces: %v\n", discovered.WifiInterfaces)
 }
 
-func logLine(cfg SessionConfig, level string, source string, payload map[string]any) {
-	if cfg.JSONOutput {
-		combined := map[string]any{
+func runNodeMcuCommand(args []string) {
+	fs := flag.NewFlagSet("nodemcu-cmd", flag.ExitOnError)
+	device := fs.String("device", "", "Serial port (e.g. /dev/ttyUSB0)")
+	baud := fs.Int("baud", 115200, "Baud rate")
+	cmdText := fs.String("cmd", "PING", "Serial command to send (e.g. CHANNEL:6, HOP:1, MODE:LINK)")
+	_ = fs.Parse(args)
+
+	portPath := *device
+	if portPath == "" {
+		ports := findSerialPorts()
+		if len(ports) == 0 {
+			fmt.Fprintln(os.Stderr, "no NodeMCU USB serial device found (/dev/ttyUSB* or /dev/ttyACM*)")
+			os.Exit(1)
+		}
+		portPath = ports[0]
+	}
+	if err := configureSerialPort(portPath, *baud); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	f, err := os.OpenFile(portPath, os.O_RDWR, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "open %s: %v\n", portPath, err)
+		os.Exit(1)
+	}
+	defer f.Close()
+	_, _ = fmt.Fprintf(f, "%s\n", strings.TrimSpace(*cmdText))
+	fmt.Printf("Sent %q to %s\n", *cmdText, portPath)
+}
+
+func runCollector(cfg SessionConfig) error {
+	resolved := resolveSourceTarget(cfg)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	switch {
+	case strings.HasPrefix(resolved, "nodemcu:"):
+		port := strings.TrimPrefix(resolved, "nodemcu:")
+		return runNodeMcuSerialLoop(cfg, client, port)
+	case strings.HasPrefix(resolved, "host-wifi:"):
+		iface := strings.TrimPrefix(resolved, "host-wifi:")
+		return runHostWifiLoop(cfg, client, iface)
+	case resolved == "bridge":
+		return runBridgeServer(cfg, client)
+	case resolved == "sim":
+		return runSimulatorLoop(cfg, client)
+	default:
+		return runFileSource(cfg, client, resolved)
+	}
+}
+
+func resolveSourceTarget(cfg SessionConfig) string {
+	src := strings.TrimSpace(cfg.Source)
+	if cfg.Device != "" && (src == "auto" || src == "nodemcu" || src == "nodemcu-serial") {
+		return "nodemcu:" + cfg.Device
+	}
+	if src == "" || src == "auto" {
+		return discoverSources().Recommended
+	}
+	if src == "nodemcu" || src == "nodemcu-serial" {
+		ports := findSerialPorts()
+		if len(ports) > 0 {
+			return "nodemcu:" + ports[0]
+		}
+		return "nodemcu:/dev/ttyUSB0"
+	}
+	if src == "host-wifi" || src == "wifi" {
+		if cfg.Interface != "" {
+			return "host-wifi:" + cfg.Interface
+		}
+		ifaces := findWifiInterfaces()
+		if len(ifaces) > 0 {
+			return "host-wifi:" + ifaces[0]
+		}
+		return "host-wifi:wlan0"
+	}
+	return src
+}
+
+func runNodeMcuSerialLoop(cfg SessionConfig, client *http.Client, port string) error {
+	if err := configureSerialPort(port, cfg.Baud); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(port, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("open NodeMCU port %s: %w", port, err)
+	}
+	defer f.Close()
+
+	if cfg.Channel >= 1 && cfg.Channel <= 13 {
+		_, _ = fmt.Fprintf(f, "CHANNEL:%d\n", cfg.Channel)
+	}
+	if cfg.PrivacyMode {
+		_, _ = fmt.Fprintln(f, "PRIVACY:1")
+	}
+
+	logMsg(cfg.JSONOutput, "nodemcu_serial", fmt.Sprintf("streaming 802.11 RF telemetry from %s -> %s", port, cfg.APIURL))
+
+	lineCh := make(chan RfObservation, 128)
+	errCh := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			if obs, ok := parseNodeMcuLine(scanner.Text()); ok {
+				lineCh <- *obs
+			}
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			errCh <- scanErr
+		} else {
+			errCh <- io.EOF
+		}
+	}()
+
+	flushTicker := time.NewTicker(250 * time.Millisecond)
+	cmdTicker := time.NewTicker(1 * time.Second)
+	defer flushTicker.Stop()
+	defer cmdTicker.Stop()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	var buffer []RfObservation
+	batchesSent := 0
+
+	for {
+		select {
+		case <-sigCh:
+			return nil
+		case readErr := <-errCh:
+			return readErr
+		case obs := <-lineCh:
+			buffer = append(buffer, obs)
+			if len(buffer) >= 24 || obs.Subtype == "deauth" || obs.Subtype == "disassoc" {
+				if err := flushSerialBatch(client, cfg, port, &buffer); err == nil {
+					batchesSent++
+					if cfg.MaxBatches > 0 && batchesSent >= cfg.MaxBatches {
+						return nil
+					}
+				}
+			}
+		case <-flushTicker.C:
+			if len(buffer) > 0 {
+				if err := flushSerialBatch(client, cfg, port, &buffer); err == nil {
+					batchesSent++
+					if cfg.MaxBatches > 0 && batchesSent >= cfg.MaxBatches {
+						return nil
+					}
+				}
+			}
+		case <-cmdTicker.C:
+			pollNodeMcuCommands(client, cfg.APIURL, f)
+		}
+	}
+}
+
+func flushSerialBatch(client *http.Client, cfg SessionConfig, port string, buf *[]RfObservation) error {
+	batch := IngestBatch{
+		SourceID:     "nodemcu_usb",
+		SourceName:   "NodeMCU USB (" + filepath.Base(port) + ")",
+		SourceKind:   "nodemcu_serial",
+		LiveSource:   true,
+		Observations: *buf,
+	}
+	err := postIngestBatch(client, cfg.APIURL, batch)
+	if err != nil {
+		logMsg(cfg.JSONOutput, "warn", fmt.Sprintf("ingest failed: %v", err))
+		return err
+	}
+	logMsg(cfg.JSONOutput, "nodemcu_serial", fmt.Sprintf("sent %d RF frames", len(*buf)))
+	*buf = nil
+	return nil
+}
+
+func runHostWifiLoop(cfg SessionConfig, client *http.Client, iface string) error {
+	logMsg(cfg.JSONOutput, "host_wifi", fmt.Sprintf("monitoring interface %s -> %s", iface, cfg.APIURL))
+	ticker := time.NewTicker(cfg.Interval)
+	defer ticker.Stop()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	batches := 0
+	for {
+		obs, err := collectHostWifiOnce(iface)
+		if err != nil {
+			logMsg(cfg.JSONOutput, "warn", err.Error())
+		} else {
+			batch := IngestBatch{
+				SourceID:     "host_" + iface,
+				SourceName:   "Host Wi-Fi (" + iface + ")",
+				SourceKind:   "host_wifi",
+				LiveSource:   true,
+				Observations: obs,
+			}
+			if postErr := postIngestBatch(client, cfg.APIURL, batch); postErr != nil {
+				logMsg(cfg.JSONOutput, "warn", fmt.Sprintf("ingest error: %v", postErr))
+			} else {
+				logMsg(cfg.JSONOutput, "host_wifi", fmt.Sprintf("sent %d observations from %s", len(obs), iface))
+			}
+			batches++
+			if cfg.MaxBatches > 0 && batches >= cfg.MaxBatches {
+				return nil
+			}
+		}
+
+		select {
+		case <-sigCh:
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func runSimulatorLoop(cfg SessionConfig, client *http.Client) error {
+	sim := newSimulatorState(cfg.Scenario)
+	logMsg(cfg.JSONOutput, "simulator", fmt.Sprintf("streaming RF simulation (%s) -> %s", cfg.Scenario, cfg.APIURL))
+	ticker := time.NewTicker(cfg.Interval)
+	defer ticker.Stop()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	batches := 0
+	for {
+		batch := sim.nextBatch()
+		if err := postIngestBatch(client, cfg.APIURL, batch); err != nil {
+			logMsg(cfg.JSONOutput, "warn", fmt.Sprintf("sim ingest error: %v", err))
+		} else {
+			logMsg(cfg.JSONOutput, "simulator", fmt.Sprintf("tick %d: %d observations", sim.tick, len(batch.Observations)))
+		}
+		batches++
+		if cfg.MaxBatches > 0 && batches >= cfg.MaxBatches {
+			return nil
+		}
+		select {
+		case <-sigCh:
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func runBridgeServer(cfg SessionConfig, client *http.Client) error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/wifi/ingest", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var batch IngestBatch
+		if err := json.Unmarshal(raw, &batch); err != nil {
+			http.Error(w, "invalid ingest json", http.StatusBadRequest)
+			return
+		}
+		if batch.SourceKind == "" {
+			batch.SourceKind = "nodemcu_wifi"
+		}
+		batch.LiveSource = true
+		if err := postIngestBatch(client, cfg.APIURL, batch); err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		logMsg(cfg.JSONOutput, "bridge", fmt.Sprintf("relayed %d frames from %s", len(batch.Observations), batch.SourceID))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"relayed"}`))
+	})
+
+	logMsg(cfg.JSONOutput, "bridge", fmt.Sprintf("listening on %s for unplugged NodeMCU nodes -> %s", cfg.ListenAddr, cfg.APIURL))
+	return http.ListenAndServe(cfg.ListenAddr, mux)
+}
+
+func runFileSource(cfg SessionConfig, client *http.Client, path string) error {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".pcap" || ext == ".pcapng" || ext == ".csv" {
+		if err := uploadCaptureFile(client, cfg.APIURL, path); err != nil {
+			return err
+		}
+		logMsg(cfg.JSONOutput, "file", fmt.Sprintf("uploaded capture %s to %s/wifi/upload", path, cfg.APIURL))
+		return nil
+	}
+	obs, err := readJsonlBatchFile(path)
+	if err != nil {
+		return err
+	}
+	chunkSize := 20
+	for i := 0; i < len(obs); i += chunkSize {
+		end := i + chunkSize
+		if end > len(obs) {
+			end = len(obs)
+		}
+		batch := IngestBatch{
+			SourceID:     filepath.Base(path),
+			SourceName:   "Replay (" + filepath.Base(path) + ")",
+			SourceKind:   "file_replay",
+			LiveSource:   false,
+			Observations: obs[i:end],
+		}
+		if err := postIngestBatch(client, cfg.APIURL, batch); err != nil {
+			return err
+		}
+		time.Sleep(cfg.Interval)
+	}
+	return nil
+}
+
+func logMsg(jsonOut bool, source string, msg string) {
+	if jsonOut {
+		payload, _ := json.Marshal(map[string]any{
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
-			"level":     level,
 			"source":    source,
-			"command":   cfg.Command,
-		}
-		for key, value := range payload {
-			combined[key] = value
-		}
-		_ = json.NewEncoder(os.Stdout).Encode(combined)
+			"message":   msg,
+		})
+		fmt.Println(string(payload))
 		return
 	}
-	message := fmt.Sprintf("%v", payload["message"])
-	delete(payload, "message")
-	fmt.Printf("[%s] %s", strings.ToUpper(level), message)
-	if source != "" {
-		fmt.Printf(" source=%s", source)
-	}
-	if len(payload) > 0 {
-		encoded, _ := json.Marshal(payload)
-		fmt.Printf(" %s", string(encoded))
-	}
-	fmt.Println()
-}
-
-func maxInt(a int, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+	fmt.Printf("[%s] %s\n", source, msg)
 }

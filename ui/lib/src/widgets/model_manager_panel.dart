@@ -18,11 +18,11 @@ class ModelManagerPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PanelShell(
-      title: 'YOLO Models',
-      subtitle: 'Upload, switch, and inspect detector weights',
+      title: 'RF Intelligence Profiles',
+      subtitle: 'Switch active Wi-Fi sensing mode profiles or upload custom .profile/.yaml/.json weights',
       trailing: OutlinedButton(
         onPressed: onUpload,
-        child: const Text('Upload New Model'),
+        child: const Text('Upload Profile'),
       ),
       child: ListView.separated(
         itemCount: models.length,
@@ -52,7 +52,8 @@ class ModelManagerPanel extends StatelessWidget {
   }
 
   String _formatBytes(int? size) {
-    if (size == null) return 'unknown size';
+    if (size == null) return 'preset';
+    if (size < 1024) return '$size B';
     if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
     return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
   }

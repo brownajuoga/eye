@@ -6,6 +6,18 @@ import 'package:http/http.dart' as http;
 
 import '../models/app_models.dart';
 
+class WifiVisionFrameBundle {
+  const WifiVisionFrameBundle({
+    required this.vision,
+    required this.sourcesStatus,
+    required this.palette,
+  });
+
+  final WifiVisionState vision;
+  final WifiSourcesStatus sourcesStatus;
+  final String palette;
+}
+
 class EyeApiClient {
   EyeApiClient({
     http.Client? client,
@@ -15,6 +27,8 @@ class EyeApiClient {
 
   final http.Client _client;
   final String baseUrl;
+
+  String get mjpegStreamUrl => '$baseUrl/wifi/stream.mjpeg';
 
   static String _resolveBaseUrl() {
     const configured = String.fromEnvironment('EYE_API_BASE_URL', defaultValue: '');
@@ -37,7 +51,54 @@ class EyeApiClient {
     return DashboardSnapshot.fromJson(jsonDecode(response.body) as Map<String, dynamic>, baseUrl: baseUrl);
   }
 
-  Future<DashboardSnapshot> updateControls(ControlState controls) async {
+  Future<WifiVisionFrameBundle> fetchWifiVision() async {
+    final response = await _client.get(Uri.parse('$baseUrl/wifi/vision'));
+    _ensureSuccess(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final wifi = body['wifi'] as Map<String, dynamic>? ?? const {};
+    return WifiVisionFrameBundle(
+      vision: WifiVisionState.fromJson(body['vision'] as Map<String, dynamic>? ?? const {}),
+      sourcesStatus: WifiSourcesStatus.fromJson(body['sources_status'] as Map<String, dynamic>? ?? const {}),
+      palette: wifi['vision_palette'] as String? ?? 'night_vision',
+    );
+  }
+
+  Future<DashboardSnapshot> controlSimulator(String action, {String? scenario}) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/wifi/simulator'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'action': action,
+        if (scenario != null) 'scenario': scenario,
+      }),
+    );
+    _ensureSuccess(response);
+    return fetchDashboard();
+  }
+
+  Future<DashboardSnapshot> controlHostScan(String action, {String? interfaceName}) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/wifi/host-scan'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'action': action,
+        if (interfaceName != null && interfaceName.isNotEmpty) 'interface': interfaceName,
+      }),
+    );
+    _ensureSuccess(response);
+    return fetchDashboard();
+  }
+
+  Future<void> updateAnchors(Map<String, Map<String, double>> anchors) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/wifi/anchors'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'anchors': anchors}),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<DashboardSnapshot> updateControls(ControlState controls, {Map<String, dynamic>? wifiPatch}) async {
     final response = await _client.post(
       Uri.parse('$baseUrl/controls'),
       headers: {'Content-Type': 'application/json'},
@@ -47,6 +108,56 @@ class EyeApiClient {
         'auto_mode': controls.autoMode,
         'confidence_threshold': controls.confidenceThreshold,
         'iou_threshold': controls.iouThreshold,
+        if (wifiPatch != null) 'wifi': wifiPatch,
+      }),
+    );
+    _ensureSuccess(response);
+    return fetchDashboard();
+  }
+
+  Future<DashboardSnapshot> updateWifiPatch(Map<String, dynamic> wifiPatch) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/controls'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'wifi': wifiPatch}),
+    );
+    _ensureSuccess(response);
+    return fetchDashboard();
+  }
+
+  Future<DashboardSnapshot> updateNodeMcuConfig(Map<String, dynamic> configPatch) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/wifi/nodemcu/config'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(configPatch),
+    );
+    _ensureSuccess(response);
+    return fetchDashboard();
+  }
+
+  Future<void> sendNodeMcuCommand(String command) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/wifi/nodemcu/command'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'command': command}),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<DashboardSnapshot> replayCapture(
+    String action, {
+    required String captureId,
+    int frameIndex = 0,
+    double speed = 1.0,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/wifi/replay'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'action': action,
+        'capture_id': captureId,
+        'frame_index': frameIndex,
+        'speed': speed,
       }),
     );
     _ensureSuccess(response);
@@ -102,6 +213,7 @@ class EyeApiClient {
       body: jsonEncode({
         'watch_for': settings.watchFor,
         'ignore': settings.ignore,
+        'known_aps': settings.knownAps,
       }),
     );
     _ensureSuccess(response);
@@ -111,7 +223,7 @@ class EyeApiClient {
   Future<DashboardSnapshot> uploadModel() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: const ['pt', 'onnx'],
+      allowedExtensions: const ['profile', 'yaml', 'json', 'pt', 'onnx'],
       withData: true,
     );
     if (result == null || result.files.isEmpty) {
@@ -120,7 +232,7 @@ class EyeApiClient {
 
     final file = result.files.single;
     if (file.bytes == null) {
-      throw Exception('Could not read the selected model file');
+      throw Exception('Could not read the selected file');
     }
 
     final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/models/upload'))
@@ -135,7 +247,7 @@ class EyeApiClient {
   Future<DashboardSnapshot> analyzeVideo() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: const ['mp4', 'avi', 'mov', 'mkv', 'webm', 'mpeg', 'mpg', 'm4v'],
+      allowedExtensions: const ['pcap', 'pcapng', 'csv', 'jsonl', 'ndjson', 'json', 'mp4', 'avi', 'mov'],
       withData: true,
     );
     if (result == null || result.files.isEmpty) {
@@ -144,10 +256,10 @@ class EyeApiClient {
 
     final file = result.files.single;
     if (file.bytes == null) {
-      throw Exception('Could not read the selected video');
+      throw Exception('Could not read the selected capture file');
     }
 
-    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/videos/analyze'))
+    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/wifi/upload'))
       ..files.add(http.MultipartFile.fromBytes('file', file.bytes!, filename: file.name));
     final streamed = await request.send();
     final response = await http.Response.fromStream(streamed);

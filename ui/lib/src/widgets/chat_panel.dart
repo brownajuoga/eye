@@ -46,37 +46,65 @@ class _ChatPanelState extends State<ChatPanel> {
     super.dispose();
   }
 
+  Future<void> _submit([String? overrideText]) async {
+    final text = (overrideText ?? messageController.text).trim();
+    if (text.isEmpty) return;
+    if (overrideText == null) {
+      messageController.clear();
+    }
+    await widget.onSend(text, feedId: selectedFeedId.isEmpty ? null : selectedFeedId);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final validFeedIds = {'', ...widget.feeds.map((f) => f.id)};
+    final effectiveFeed = validFeedIds.contains(selectedFeedId) ? selectedFeedId : '';
+
     return PanelShell(
-      title: 'Expert Chat',
-      subtitle: 'Talk to the expert, assign tasks, and query a specific feed',
+      title: 'Expert RF Chat',
+      subtitle: 'Query WIDS intrusions, channel congestion, room occupancy & NodeMCU feeds',
       child: Column(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: selectedFeedId,
-                  decoration: const InputDecoration(labelText: 'Focus Feed'),
-                  items: [
-                    const DropdownMenuItem<String>(value: '', child: Text('All feeds')),
-                    ...widget.feeds.map(
-                      (feed) => DropdownMenuItem<String>(
-                        value: feed.id,
-                        child: Text(feed.name.isEmpty ? feed.id : feed.name),
-                      ),
-                    ),
-                  ],
-                  onChanged: (value) => setState(() => selectedFeedId = value ?? ''),
+          DropdownButtonFormField<String>(
+            initialValue: effectiveFeed,
+            decoration: const InputDecoration(labelText: 'Focus RF Sensor Feed'),
+            items: [
+              const DropdownMenuItem<String>(value: '', child: Text('All RF sensors')),
+              ...widget.feeds.map(
+                (feed) => DropdownMenuItem<String>(
+                  value: feed.id,
+                  child: Text(feed.name.isEmpty ? feed.id : feed.name),
                 ),
               ),
             ],
+            onChanged: (value) => setState(() => selectedFeedId = value ?? ''),
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                ActionChip(
+                  label: const Text('Any deauth or evil twin attacks?'),
+                  onPressed: () => _submit('Are there any deauth attacks or evil twin alerts right now?'),
+                ),
+                ActionChip(
+                  label: const Text('Cleanest Wi-Fi channel?'),
+                  onPressed: () => _submit('Which 2.4 GHz channel has the lowest congestion and interference?'),
+                ),
+                ActionChip(
+                  label: const Text('Room occupancy & motion?'),
+                  onPressed: () => _submit('Is anyone detected in the room or crossing the RSSI tripwire?'),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 12),
           Expanded(
             child: widget.messages.isEmpty
-                ? const Center(child: Text('No chat messages yet'))
+                ? const Center(child: Text('Ask about your 2.4 GHz spectrum, NodeMCU telemetry, or recent alerts.'))
                 : ListView.separated(
                     itemCount: widget.messages.length,
                     separatorBuilder: (context, index) => const SizedBox(height: 10),
@@ -98,27 +126,12 @@ class _ChatPanelState extends State<ChatPanel> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(assistant ? 'Expert' : 'Operator', style: Theme.of(context).textTheme.titleSmall),
+                                  Text(assistant ? 'RF Expert' : 'Operator', style: Theme.of(context).textTheme.titleSmall),
                                   const SizedBox(height: 6),
                                   Text(message.content),
                                   if (message.taskSummary.isNotEmpty) ...[
                                     const SizedBox(height: 8),
                                     Text(message.taskSummary, style: Theme.of(context).textTheme.bodySmall),
-                                  ],
-                                  if (assistant && message.plan.isNotEmpty) ...[
-                                    const SizedBox(height: 10),
-                                    _LabeledBlock(label: 'Intent', value: '${message.plan['intent'] ?? 'unknown'}'),
-                                    if ((message.plan['resources'] as Map?)?.isNotEmpty ?? false)
-                                      _LabeledBlock(
-                                        label: 'Resources',
-                                        value: (message.plan['resources'] as Map).entries
-                                            .map((entry) => '${entry.key}: ${entry.value}')
-                                            .join(', '),
-                                      ),
-                                  ],
-                                  if (assistant && message.actions.isNotEmpty) ...[
-                                    const SizedBox(height: 8),
-                                    _ListBlock(label: 'Actions', items: message.actions),
                                   ],
                                   if (assistant && message.evidence.isNotEmpty) ...[
                                     const SizedBox(height: 8),
@@ -141,20 +154,16 @@ class _ChatPanelState extends State<ChatPanel> {
                   controller: messageController,
                   maxLines: 3,
                   minLines: 1,
+                  onSubmitted: (_) => _submit(),
                   decoration: const InputDecoration(
-                    labelText: 'Message the expert',
-                    hintText: 'Example: Focus on feed 0 and explain whether the bag interaction is suspicious.',
+                    labelText: 'Message the RF Expert',
+                    hintText: 'Example: Which channel has the least congestion or were deauths detected?',
                   ),
                 ),
               ),
               const SizedBox(width: 12),
               FilledButton(
-                onPressed: () async {
-                  final message = messageController.text.trim();
-                  if (message.isEmpty) return;
-                  await widget.onSend(message, feedId: selectedFeedId.isEmpty ? null : selectedFeedId);
-                  messageController.clear();
-                },
+                onPressed: () => _submit(),
                 child: const Text('Send'),
               ),
             ],
@@ -162,21 +171,6 @@ class _ChatPanelState extends State<ChatPanel> {
         ],
       ),
     );
-  }
-}
-
-class _LabeledBlock extends StatelessWidget {
-  const _LabeledBlock({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text('$label: $value', style: Theme.of(context).textTheme.bodySmall);
   }
 }
 
@@ -196,7 +190,12 @@ class _ListBlock extends StatelessWidget {
       children: [
         Text(label, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 4),
-        ...items.take(4).map((item) => Text(item.entries.map((entry) => '${entry.key}: ${entry.value}').join(', '), style: Theme.of(context).textTheme.bodySmall)),
+        ...items.take(4).map(
+              (item) => Text(
+                item.entries.map((entry) => '${entry.key}: ${entry.value}').join(', '),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
       ],
     );
   }

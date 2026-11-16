@@ -19,30 +19,30 @@ class CapabilitiesPanel extends StatelessWidget {
     final expertBackends = _stringList(capabilities['expert_backends']);
 
     return PanelShell(
-      title: 'System Capabilities',
-      subtitle: 'What this runtime can do right now',
+      title: 'RF Capabilities',
+      subtitle: 'Active Wi-Fi sensing & NodeMCU edge modules',
       child: ListView(
         children: [
           _CapabilityGroup(title: 'Inputs', values: inputSources),
-          const SizedBox(height: 16),
-          _CapabilityGroup(title: 'Detectors', values: detectionModules),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          _CapabilityGroup(title: 'RF Modules', values: detectionModules),
+          const SizedBox(height: 12),
           _CapabilityGroup(title: 'Experts', values: expertBackends),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              _flagChip('Live Feed', capabilities['supports_live_feed'] == true),
-              _flagChip('Video Upload', capabilities['supports_video_upload'] == true),
+              _flagChip('Live Vision', capabilities['supports_live_feed'] == true),
+              _flagChip('PCAP/CSV Upload', capabilities['supports_video_upload'] == true),
               _flagChip('Hot Reload', capabilities['supports_policy_hot_reload'] == true),
-              _flagChip('Model Switching', capabilities['supports_runtime_model_switching'] == true),
-              _flagChip('Multicamera Sync', capabilities['supports_multicamera_sync'] == true),
+              _flagChip('Profile Switch', capabilities['supports_runtime_model_switching'] == true),
+              _flagChip('Multi-Node Sync', capabilities['supports_multicamera_sync'] == true),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Text(
-            'Tracking: ${capabilities['tracking_status'] ?? 'unknown'}\nCalibration: ${capabilities['calibration_status'] ?? 'unknown'}',
+            'Tracking: ${capabilities['tracking_status'] ?? 'rf_ready'}\nCalibration: ${capabilities['calibration_status'] ?? 'anchors_ready'}',
           ),
         ],
       ),

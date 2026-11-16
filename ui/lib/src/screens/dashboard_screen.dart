@@ -2,17 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../models/app_models.dart';
 import '../state/dashboard_controller.dart';
-import '../widgets/control_panel.dart';
 import '../widgets/capabilities_panel.dart';
 import '../widgets/chat_panel.dart';
+import '../widgets/control_panel.dart';
 import '../widgets/expert_panel.dart';
 import '../widgets/feeds_panel.dart';
-import '../widgets/live_feed_panel.dart';
 import '../widgets/logs_panel.dart';
 import '../widgets/model_manager_panel.dart';
+import '../widgets/night_vision_cam_panel.dart';
 import '../widgets/rules_panel.dart';
-import '../widgets/sidebar_navigation.dart';
 import '../widgets/settings_panel.dart';
+import '../widgets/sidebar_navigation.dart';
 import '../widgets/stats_panel.dart';
 import '../widgets/video_analysis_panel.dart';
 
@@ -45,6 +45,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       animation: controller,
       builder: (context, _) {
         final snapshot = controller.snapshot;
+        final vision = controller.liveVision ?? snapshot?.wifiVision ?? WifiVisionState.empty();
+        final sourcesStatus = controller.liveSourcesStatus ?? snapshot?.wifiSourcesStatus ?? WifiSourcesStatus.empty();
         final controlState = snapshot?.controlState ??
             const ControlState(
               confidenceThreshold: 0.35,
@@ -53,6 +55,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               detectionEnabled: true,
               mode: 'balanced',
             );
+        final wifiSettings = snapshot?.wifiSettings ?? WifiPolicySettings.fromPolicy(const {});
         final expert = snapshot == null ? ExpertSettings.fromPolicy(const {}) : ExpertSettings.fromPolicy(snapshot.policy);
         final watchlist = snapshot == null ? WatchlistSettings.fromPolicy(const {}) : WatchlistSettings.fromPolicy(snapshot.policy);
 
@@ -64,14 +67,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 onSectionChanged: (next) => setState(() => section = next),
                 statusText: snapshot == null
                     ? 'Connecting…'
-                    : '${snapshot.runtime.effectiveMode} mode\n${snapshot.runtime.backend}',
+                    : '${wifiSettings.mode.toUpperCase()} • ${snapshot.runtime.backend}\nSource: ${vision.sourceKind}',
               ),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(20),
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      final wide = constraints.maxWidth > 1100;
+                      final wide = constraints.maxWidth > 1060;
 
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -84,9 +87,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   style: Theme.of(context).textTheme.headlineMedium,
                                 ),
                               ),
-                              if (controller.busy) const CircularProgressIndicator(),
+                              if (controller.busy)
+                                const Padding(
+                                  padding: EdgeInsets.only(right: 8),
+                                  child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
+                                ),
                               if (!controller.busy)
                                 IconButton(
+                                  tooltip: 'Refresh Dashboard',
                                   onPressed: () => controller.refresh(),
                                   icon: const Icon(Icons.refresh),
                                 ),
@@ -94,13 +102,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                           if (controller.error != null)
                             Padding(
-                              padding: const EdgeInsets.only(top: 8),
+                              padding: const EdgeInsets.only(top: 6),
                               child: Text(
                                 controller.error!,
                                 style: const TextStyle(color: Colors.red),
                               ),
                             ),
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 16),
                           Expanded(
                             child: switch (section) {
                               AppSection.dashboard => wide
@@ -109,9 +117,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       children: [
                                         Expanded(
                                           flex: 3,
-                                          child: LiveFeedPanel(
-                                            latestFrameUrl: snapshot?.latestFrameUrl,
-                                            latestResult: snapshot?.latestResult,
+                                          child: NightVisionCamPanel(
+                                            vision: vision,
+                                            sourcesStatus: sourcesStatus,
+                                            palette: controller.activePalette,
+                                            privacyMode: wifiSettings.privacyMode,
+                                            onToggleHostScan: (start) => controller.controlHostScan(start ? 'start' : 'stop'),
+                                            onControlSimulator: (action, scenario) =>
+                                                controller.controlSimulator(action, scenario: scenario),
+                                            onChangePalette: (pal) => controller.updateWifiPatch({'vision_palette': pal}),
+                                            onTogglePrivacy: (priv) => controller.updateWifiPatch({'privacy_mode': priv}),
+                                            onUpdateAnchors: controller.updateAnchors,
+                                            onReplayAction: (act, cid, idx) =>
+                                                controller.replayCapture(act, captureId: cid, frameIndex: idx),
                                             onRefresh: () => controller.refresh(),
                                           ),
                                         ),
@@ -120,7 +138,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                           flex: 2,
                                           child: ListView(
                                             children: [
-                                              StatsPanel(snapshot: snapshot),
+                                              StatsPanel(snapshot: snapshot, liveVision: vision),
                                               const SizedBox(height: 16),
                                               SizedBox(
                                                 height: 300,
@@ -128,7 +146,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                               ),
                                               const SizedBox(height: 16),
                                               SizedBox(
-                                                height: 400,
+                                                height: 360,
                                                 child: LogsPanel(entries: snapshot?.logs ?? const []),
                                               ),
                                             ],
@@ -139,15 +157,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   : ListView(
                                       children: [
                                         SizedBox(
-                                          height: 400,
-                                          child: LiveFeedPanel(
-                                            latestFrameUrl: snapshot?.latestFrameUrl,
-                                            latestResult: snapshot?.latestResult,
+                                          height: 480,
+                                          child: NightVisionCamPanel(
+                                            vision: vision,
+                                            sourcesStatus: sourcesStatus,
+                                            palette: controller.activePalette,
+                                            privacyMode: wifiSettings.privacyMode,
+                                            onToggleHostScan: (start) => controller.controlHostScan(start ? 'start' : 'stop'),
+                                            onControlSimulator: (action, scenario) =>
+                                                controller.controlSimulator(action, scenario: scenario),
+                                            onChangePalette: (pal) => controller.updateWifiPatch({'vision_palette': pal}),
+                                            onTogglePrivacy: (priv) => controller.updateWifiPatch({'privacy_mode': priv}),
+                                            onUpdateAnchors: controller.updateAnchors,
+                                            onReplayAction: (act, cid, idx) =>
+                                                controller.replayCapture(act, captureId: cid, frameIndex: idx),
                                             onRefresh: () => controller.refresh(),
                                           ),
                                         ),
                                         const SizedBox(height: 16),
-                                        StatsPanel(snapshot: snapshot),
+                                        StatsPanel(snapshot: snapshot, liveVision: vision),
                                         const SizedBox(height: 16),
                                         SizedBox(
                                           height: 300,
@@ -167,6 +195,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 ),
                               AppSection.feeds => FeedsPanel(
                                   feeds: snapshot?.feeds ?? const [],
+                                  nodemcuConfig: snapshot?.nodemcuConfig ?? NodeMcuConfig.fromJson(const {}),
+                                  sourcesStatus: sourcesStatus,
+                                  onSaveNodeMcu: controller.saveNodeMcuConfig,
+                                  onSendNodeMcuCommand: controller.sendNodeMcuCommand,
+                                  onToggleHostScan: (start) => controller.controlHostScan(start ? 'start' : 'stop'),
                                 ),
                               AppSection.chat => ChatPanel(
                                   messages: snapshot?.chatHistory ?? const [],
@@ -176,6 +209,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 ),
                               AppSection.controls => ControlPanel(
                                   controls: controlState,
+                                  wifiSettings: wifiSettings,
                                   onChanged: controller.saveControls,
                                 ),
                               AppSection.expert => ExpertPanel(
@@ -187,6 +221,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               AppSection.videos => VideoAnalysisPanel(
                                   history: snapshot?.videoHistory ?? const [],
                                   onAnalyzeVideo: controller.analyzeVideo,
+                                  onReplayCapture: (act, cid, idx) async {
+                                    await controller.replayCapture(act, captureId: cid, frameIndex: idx);
+                                    if (mounted) {
+                                      setState(() => section = AppSection.dashboard);
+                                    }
+                                  },
                                 ),
                               AppSection.logs => LogsPanel(entries: snapshot?.logs ?? const []),
                               AppSection.rules => RulesPanel(
@@ -210,14 +250,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   String sectionTitle(AppSection section) {
     return switch (section) {
-      AppSection.dashboard => 'System Dashboard',
-      AppSection.settings => 'Settings',
-      AppSection.feeds => 'Feed Monitor',
-      AppSection.chat => 'Expert Chat',
-      AppSection.models => 'Model Manager',
-      AppSection.controls => 'Control Panel',
-      AppSection.expert => 'Expert Controller',
-      AppSection.videos => 'Video Analysis',
+      AppSection.dashboard => 'Wi-Fi Night-Vision Cam',
+      AppSection.settings => 'System Settings',
+      AppSection.feeds => 'Sensors & NodeMCU',
+      AppSection.chat => 'Expert RF Chat',
+      AppSection.models => 'RF Sensing Profiles',
+      AppSection.controls => 'RF & Privacy Controls',
+      AppSection.expert => 'Expert & Trusted APs',
+      AppSection.videos => 'Captures & Replay',
       AppSection.logs => 'Event Logs',
       AppSection.rules => 'Automation Rules',
     };

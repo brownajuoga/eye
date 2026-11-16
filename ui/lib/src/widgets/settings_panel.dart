@@ -111,6 +111,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           Text('System', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey(settings.mode),
             initialValue: _modes.contains(settings.mode) ? settings.mode : 'balanced',
             decoration: const InputDecoration(labelText: 'Runtime Mode'),
             items: const [
@@ -149,6 +150,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           _numberField(refreshIntervalController, 'Dashboard Refresh Interval Seconds'),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey(currentFeedId),
             initialValue: currentFeedId,
             decoration: const InputDecoration(labelText: 'Default Sensor Feed'),
             items: [
@@ -187,6 +189,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           Text('Expert Reasoning', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey(settings.expertBackend),
             initialValue: _backends.contains(settings.expertBackend) ? settings.expertBackend : 'mock',
             decoration: const InputDecoration(labelText: 'Expert Backend'),
             items: const [
@@ -220,6 +223,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           _numberField(timeoutController, 'Timeout Seconds'),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey(settings.taskProfile),
             initialValue: _profiles.contains(settings.taskProfile) ? settings.taskProfile : 'wifi_security',
             decoration: const InputDecoration(labelText: 'Task Profile'),
             items: const [

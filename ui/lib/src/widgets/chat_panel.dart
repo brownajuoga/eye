@@ -66,6 +66,7 @@ class _ChatPanelState extends State<ChatPanel> {
       child: Column(
         children: [
           DropdownButtonFormField<String>(
+            key: ValueKey(effectiveFeed),
             initialValue: effectiveFeed,
             decoration: const InputDecoration(labelText: 'Focus RF Sensor Feed'),
             items: [

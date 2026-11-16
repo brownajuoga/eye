@@ -127,6 +127,7 @@ class _ExpertPanelState extends State<ExpertPanel> {
       child: ListView(
         children: [
           DropdownButtonFormField<String>(
+            key: ValueKey(expert.backend),
             initialValue: _backends.contains(expert.backend) ? expert.backend : 'mock',
             decoration: const InputDecoration(labelText: 'Expert Backend'),
             items: const [
@@ -165,6 +166,7 @@ class _ExpertPanelState extends State<ExpertPanel> {
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey(expert.taskProfile),
             initialValue: _profiles.contains(expert.taskProfile) ? expert.taskProfile : 'wifi_security',
             decoration: const InputDecoration(labelText: 'Task Profile'),
             items: const [

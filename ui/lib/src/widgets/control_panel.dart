@@ -52,6 +52,7 @@ class _ControlPanelState extends State<ControlPanel> {
       child: ListView(
         children: [
           DropdownButtonFormField<String>(
+            key: ValueKey(wifi.mode),
             initialValue: wifiModes.contains(wifi.mode) ? wifi.mode : 'multi',
             decoration: const InputDecoration(labelText: 'Wi-Fi Intelligence Mode'),
             items: const [
@@ -71,6 +72,7 @@ class _ControlPanelState extends State<ControlPanel> {
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey(wifi.visionPalette),
             initialValue: palettes.contains(wifi.visionPalette) ? wifi.visionPalette : 'night_vision',
             decoration: const InputDecoration(labelText: 'Cam Display Palette'),
             items: const [
@@ -89,6 +91,7 @@ class _ControlPanelState extends State<ControlPanel> {
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
+            key: ValueKey(controls.mode),
             initialValue: runtimeModes.contains(controls.mode) ? controls.mode : 'balanced',
             decoration: const InputDecoration(labelText: 'Compute / Sensitivity Tier'),
             items: const [

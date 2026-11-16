@@ -199,14 +199,24 @@ func resolveSourceTarget(cfg SessionConfig) string {
 
 func runNodeMcuSerialLoop(cfg SessionConfig, client *http.Client, port string) error {
 	if err := configureSerialPort(port, cfg.Baud); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "permission denied") {
+			return fmt.Errorf("%w\nHint: grant USB serial access once with: sudo usermod -aG dialout $USER && newgrp dialout", err)
+		}
 		return err
 	}
 	f, err := os.OpenFile(port, os.O_RDWR, 0)
 	if err != nil {
+		if os.IsPermission(err) {
+			return fmt.Errorf("open NodeMCU port %s: %w\nHint: run 'sudo usermod -aG dialout $USER && newgrp dialout'", port, err)
+		}
 		return fmt.Errorf("open NodeMCU port %s: %w", port, err)
 	}
-	defer f.Close()
+	defer func() {
+		_, _ = fmt.Fprintln(f, "ACTIVE:0")
+		_ = f.Close()
+	}()
 
+	_, _ = fmt.Fprintln(f, "ACTIVE:1")
 	if cfg.Channel >= 1 && cfg.Channel <= 13 {
 		_, _ = fmt.Fprintf(f, "CHANNEL:%d\n", cfg.Channel)
 	}

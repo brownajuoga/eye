@@ -525,10 +525,12 @@ func pollNodeMcuCommands(client *http.Client, apiURL string, nodePort *os.File) 
 	endpoint := strings.TrimRight(apiURL, "/") + "/wifi/nodemcu/command?consume=true"
 	resp, err := client.Get(endpoint)
 	if err != nil {
+		_, _ = fmt.Fprintln(nodePort, "ACTIVE:0")
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		_, _ = fmt.Fprintln(nodePort, "ACTIVE:0")
 		return
 	}
 	var payload struct {
@@ -537,10 +539,32 @@ func pollNodeMcuCommands(client *http.Client, apiURL string, nodePort *os.File) 
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return
 	}
+	hasActiveOverride := false
 	for _, cmd := range payload.Commands {
-		if strings.TrimSpace(cmd) != "" {
-			_, _ = fmt.Fprintf(nodePort, "%s\n", strings.TrimSpace(cmd))
+		trimmed := strings.TrimSpace(cmd)
+		if trimmed != "" {
+			if strings.HasPrefix(trimmed, "ACTIVE:") {
+				hasActiveOverride = true
+			}
+			_, _ = fmt.Fprintf(nodePort, "%s\n", trimmed)
 		}
+	}
+	if !hasActiveOverride {
+		// Check whether detection is enabled so the NodeMCU LED reflects active vs paused state
+		visResp, visErr := client.Get(strings.TrimRight(apiURL, "/") + "/wifi/vision")
+		if visErr == nil {
+			defer visResp.Body.Close()
+			var vis struct {
+				Controls struct {
+					DetectionEnabled bool `json:"detection_enabled"`
+				} `json:"controls"`
+			}
+			if json.NewDecoder(visResp.Body).Decode(&vis) == nil && !vis.Controls.DetectionEnabled {
+				_, _ = fmt.Fprintln(nodePort, "ACTIVE:0")
+				return
+			}
+		}
+		_, _ = fmt.Fprintln(nodePort, "ACTIVE:1")
 	}
 }
 

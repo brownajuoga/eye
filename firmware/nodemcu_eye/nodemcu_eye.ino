@@ -133,7 +133,9 @@ static unsigned long g_last_link_sample_ms = 0;
 static unsigned long g_last_scan_ms = 0;
 static unsigned long g_window_start_ms = 0;
 static unsigned long g_btn_down_ms = 0;
-static unsigned long g_led_off_ms = 0;
+static unsigned long g_alert_until_ms = 0;
+static bool g_sensor_active = false;
+static unsigned long g_last_host_heartbeat_ms = 0;
 
 // Hybrid batch accumulator
 static const uint8_t BATCH_MAX = 28;
@@ -201,9 +203,29 @@ static void json_escape(const char* in, char* out, size_t out_len) {
   out[j] = '\0';
 }
 
-static void pulse_alert_led(uint16_t ms = 120) {
-  digitalWrite(PIN_ALERT_LED, LOW);
-  g_led_off_ms = millis() + ms;
+static void pulse_alert_led(uint16_t ms = 420) {
+  g_alert_until_ms = millis() + ms;
+}
+
+static void update_status_led(unsigned long now) {
+  bool led_on = false;
+  if (g_alert_until_ms > now) {
+    // Rapid threat strobe (active on deauth/disassoc/canary alerts)
+    led_on = ((now / 60) % 2) == 0;
+  } else if (g_portal_active) {
+    // Config portal mode: steady 300ms toggle
+    led_on = ((now / 300) % 2) == 0;
+  } else if (g_sensor_active) {
+    // ACTIVE: Crisp double-blink heartbeat every 1.0s
+    unsigned long phase = now % 1000;
+    led_on = (phase < 65) || (phase >= 170 && phase < 235);
+  } else {
+    // NOT ACTIVE / STANDBY: Slow single blink once every 2.5s
+    unsigned long phase = now % 2500;
+    led_on = (phase < 180);
+  }
+  // NodeMCU builtin LED (GPIO2 / D4) is active-LOW
+  digitalWrite(PIN_ALERT_LED, led_on ? LOW : HIGH);
 }
 
 // ---------- Promiscuous RX Callback (kept fast & heap-free!) ----------
@@ -428,23 +450,35 @@ static bool connect_sta(uint16_t timeout_ms = 10000) {
 
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < timeout_ms) {
-    delay(150);
+    update_status_led(millis());
+    delay(80);
   }
   return WiFi.status() == WL_CONNECTED;
 }
 
 static bool post_json_to_server(const String& payload) {
-  if (!connect_sta()) return false;
+  if (!connect_sta()) {
+    g_sensor_active = false;
+    return false;
+  }
   WiFiClient client;
   HTTPClient http;
   if (!http.begin(client, g_cfg.server_url)) {
+    g_sensor_active = false;
     return false;
   }
   http.setTimeout(3500);
   http.addHeader("Content-Type", "application/json");
   int code = http.POST(payload);
+  String resp = (code >= 200 && code < 300) ? http.getString() : "";
   http.end();
-  return code >= 200 && code < 300;
+  if (code >= 200 && code < 300) {
+    g_sensor_active = (resp.indexOf("\"active\":false") < 0 && resp.indexOf("\"active\": false") < 0);
+    g_last_host_heartbeat_ms = millis();
+    return true;
+  }
+  g_sensor_active = false;
+  return false;
 }
 
 static void setup_canary_handlers() {
@@ -596,6 +630,13 @@ static void handle_serial_command(String cmd) {
     emit_serial_status("url_updated");
   } else if (cmd == "PORTAL") {
     start_setup_portal();
+  } else if (cmd == "ACTIVE:1") {
+    g_sensor_active = true;
+    g_last_host_heartbeat_ms = millis();
+    emit_serial_status("active_on");
+  } else if (cmd == "ACTIVE:0") {
+    g_sensor_active = false;
+    emit_serial_status("active_off");
   } else if (cmd == "PING") {
     emit_serial_status("pong");
   }
@@ -673,10 +714,11 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  if (g_led_off_ms != 0 && now >= g_led_off_ms) {
-    digitalWrite(PIN_ALERT_LED, HIGH);
-    g_led_off_ms = 0;
+  if (g_cfg.mode == MODE_SERIAL_PROMISC && g_sensor_active && (now - g_last_host_heartbeat_ms > 10000)) {
+    // Fall back to slow standby blink if host collector stopped sending active heartbeats
+    g_sensor_active = false;
   }
+  update_status_led(now);
 
   // Hold FLASH button >= 2s to open captive portal when unplugged
   if (digitalRead(PIN_FLASH_BTN) == LOW) {
@@ -692,6 +734,7 @@ void loop() {
 
   if (g_portal_active) {
     g_portal.handleClient();
+    update_status_led(millis());
     return;
   }
 

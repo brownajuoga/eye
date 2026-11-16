@@ -32,7 +32,14 @@ pio run -t upload
 2. Hold the **FLASH** button (`D3` / `GPIO0`) for 2 seconds (or boot with blank credentials if put into portal mode via serial command `PORTAL`).
 3. Connect a phone/laptop to Wi-Fi `EYE-NODE-SETUP` and open `http://192.168.4.1` to enter your Wi-Fi SSID, password, `ai_server` URL (`http://<your-pc-ip>:8080/wifi/ingest`), mode, and privacy preference.
 
+## Status LED Blink Patterns (`GPIO2` / `D4`)
+* **Active (Live RF Scanning / Connected to Server):** Fast double-blink heartbeat every 1.0s (`65ms ON / 105ms OFF / 65ms ON`).
+* **Not Active / Standby (Disconnected or Paused):** Slow single blink every 2.5s (`180ms ON / 2320ms OFF`).
+* **Threat Alert (Deauth / Disassoc / Canary Hit):** Rapid alarm strobe (`60ms` toggle).
+* **Setup Portal (`EYE-NODE-SETUP`):** Steady `300ms` toggle.
+
 ## USB Serial Control Commands (`115200` baud)
+* `ACTIVE:1` / `ACTIVE:0` (switch between active heartbeat blink & slow standby blink)
 * `MODE:PROMISC` / `MODE:LINK` / `MODE:HYBRID` / `MODE:CANARY`
 * `CHANNEL:6` (locks channel 6 and disables hopping)
 * `HOP:1` / `HOP:0`

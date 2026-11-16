@@ -207,7 +207,7 @@ async def wifi_ingest(payload: dict) -> dict:
     source_kind = str(payload.get("source_kind") or "nodemcu").strip()
     live_source = bool(payload.get("live_source", True))
 
-    return _process_rf_batch(
+    res = _process_rf_batch(
         app.state,
         observations=observations,
         source_id=source_id,
@@ -215,6 +215,9 @@ async def wifi_ingest(payload: dict) -> dict:
         source_kind=source_kind,
         live_source=live_source,
     )
+    policy = app.state.policy_engine.get_policy()
+    res["active"] = bool(policy.get("controls", {}).get("detection_enabled", True))
+    return res
 
 
 @app.post("/wifi/anchors")
@@ -622,7 +625,9 @@ async def update_controls(payload: dict) -> dict:
 
     controls: dict[str, Any] = {}
     if "detection_enabled" in payload:
-        controls["detection_enabled"] = bool(payload["detection_enabled"])
+        enabled = bool(payload["detection_enabled"])
+        controls["detection_enabled"] = enabled
+        app.state.nodemcu_commands.append("ACTIVE:1" if enabled else "ACTIVE:0")
     if "auto_mode" in payload:
         controls["auto_mode"] = bool(payload["auto_mode"])
     if "confidence_threshold" in payload:

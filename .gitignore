@@ -68,5 +68,8 @@ ai_server/*.pth
 # !ai_server/yolov8n.pt
 # !ai_server/yolo11n.pt
 
+# --- PlatformIO (NodeMCU firmware build cache) ---
+.pio/
+
 # --- Local notes ---
 pnotes.txt

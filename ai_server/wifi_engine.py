@@ -10,11 +10,28 @@ import threading
 import time
 from typing import Any
 
-from rf_classifier import classify_rf_emitter, infer_humans_and_obstructions
+from rf_classifier import classify_rf_emitter, get_local_host_wifi_info, infer_humans_and_obstructions
 
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 420
+
+
+def _is_valid_unicast_mac(mac: str) -> bool:
+    if not mac or len(mac) != 17 or mac in {"ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00"}:
+        return False
+    if mac.endswith(":ff:ff") or mac.startswith(("04:00:", "05:00:", "04:40:")):
+        return False
+    parts = mac.split(":")
+    if len(parts) != 6:
+        return False
+    try:
+        b0 = int(parts[0], 16)
+        for p in parts:
+            int(p, 16)
+    except ValueError:
+        return False
+    return (b0 & 0x01) == 0
 
 
 def _now_ts() -> float:
@@ -51,6 +68,7 @@ class WifiEngine:
         self.window_seconds = window_seconds
         self._lock = threading.RLock()
         self._emitters: dict[str, dict[str, Any]] = {}
+        self._known_ap_macs: set[str] = set()
         self._recent_frames: deque[dict[str, Any]] = deque(maxlen=600)
         self._deauth_times: deque[float] = deque(maxlen=250)
         self._known_ssid_profiles: dict[str, dict[str, Any]] = {}
@@ -68,6 +86,7 @@ class WifiEngine:
     def reset_state(self) -> None:
         with self._lock:
             self._emitters.clear()
+            self._known_ap_macs.clear()
             self._recent_frames.clear()
             self._deauth_times.clear()
             self._known_ssid_profiles.clear()
@@ -122,6 +141,13 @@ class WifiEngine:
             while self._deauth_times and self._deauth_times[0] < (now - 12.0):
                 self._deauth_times.popleft()
 
+            host_info = get_local_host_wifi_info()
+            connected_bssid = str(host_info.get("connected_bssid", "")).lower()
+            connected_ssid = str(host_info.get("connected_ssid", ""))
+            connected_ch = int(host_info.get("connected_channel", 0) or 0)
+            if connected_bssid and _is_valid_unicast_mac(connected_bssid):
+                self._known_ap_macs.add(connected_bssid)
+
             batch_deauths = 0
             batch_canary = 0
             evil_twins: list[dict[str, Any]] = []
@@ -143,8 +169,36 @@ class WifiEngine:
                 randomized = bool(raw.get("randomized", False))
                 in_use = bool(raw.get("in_use", False))
 
-                is_ap = subtype in {"beacon", "probe_resp", "canary_ap"} or (in_use and sa == bssid)
+                # Ignore malformed/corrupted MACs (except anonymized tags or threat frames)
                 is_threat_frame = subtype in {"deauth", "disassoc", "canary_probe", "canary_assoc"}
+                if not is_threat_frame and not sa.startswith("anon:") and not _is_valid_unicast_mac(sa):
+                    continue
+                if bssid != "ff:ff:ff:ff:ff:ff" and not bssid.startswith("anon:") and not _is_valid_unicast_mac(bssid):
+                    bssid = connected_bssid if sa in host_info.get("host_macs", set()) and connected_bssid else "ff:ff:ff:ff:ff:ff"
+
+                is_ap = (
+                    subtype in {"beacon", "probe_resp", "canary_ap"}
+                    or (sa == bssid and bssid != "ff:ff:ff:ff:ff:ff")
+                    or sa in self._known_ap_macs
+                )
+                if is_ap:
+                    ap_mac = bssid if (subtype in {"beacon", "probe_resp"} and _is_valid_unicast_mac(bssid)) else sa
+                    self._known_ap_macs.add(ap_mac)
+                    # Remove any stale client entry previously created for this AP MAC
+                    self._emitters.pop(f"sta:{ap_mac}", None)
+                    bssid = ap_mac
+                    sa = ap_mac
+                    if ap_mac == connected_bssid:
+                        in_use = True
+                        if not ssid and connected_ssid:
+                            ssid = connected_ssid
+
+                if sa in host_info.get("host_macs", set()) and not is_ap:
+                    in_use = True
+                    if connected_bssid:
+                        bssid = connected_bssid
+                    if not ssid and connected_ssid:
+                        ssid = connected_ssid
 
                 if subtype in {"deauth", "disassoc"}:
                     self._deauth_times.append(now)
@@ -153,7 +207,7 @@ class WifiEngine:
                     batch_canary += 1
 
                 # Evil Twin check for AP beacons / probe responses
-                if is_ap and ssid:
+                if is_ap and ssid and subtype in {"beacon", "probe_resp"}:
                     twin = self._check_evil_twin(
                         ssid=ssid,
                         bssid=bssid,
@@ -166,9 +220,34 @@ class WifiEngine:
                         evil_twins.append(twin)
 
                 emitter_key = f"ap:{bssid}" if is_ap else f"sta:{sa}"
+
+                # Determine known true channel if this emitter belongs to the local connected AP or a known AP
+                known_true_ch = 0
+                if subtype in {"beacon", "probe_resp"} and channel > 0:
+                    known_true_ch = channel
+                elif f"ap:{bssid}" in self._emitters and int(self._emitters[f"ap:{bssid}"].get("channel", 0) or 0) > 0:
+                    known_true_ch = int(self._emitters[f"ap:{bssid}"]["channel"])
+                elif in_use and connected_ch > 0 and (bssid == connected_bssid or sa == connected_bssid):
+                    known_true_ch = connected_ch
+
+                # Skip off-channel sideband bleed before creating/updating RSSI state
+                if (
+                    known_true_ch > 0
+                    and channel != known_true_ch
+                    and not is_threat_frame
+                ):
+                    continue
+
+                # For APs, only track RSSI from fixed-power management beacons/probe_resps/link_samples
+                # (mixing in high-rate OFDM data/block_ack frames causes artificial 15-18 dB power-backoff jumps)
+                is_ap_rssi_sample = not is_ap or subtype in {"beacon", "probe_resp", "link_sample", "canary_ap"}
+
                 state = self._emitters.get(emitter_key)
                 if state is None:
-                    angle = _stable_angle(emitter_key, channel)
+                    if is_ap and not is_ap_rssi_sample:
+                        continue
+                    prim_ch = known_true_ch if known_true_ch > 0 else channel
+                    angle = _stable_angle(emitter_key, prim_ch)
                     state = {
                         "id": emitter_key,
                         "anon_id": _anon_tag(emitter_key),
@@ -179,10 +258,13 @@ class WifiEngine:
                         "category": "ap" if is_ap else "client",
                         "randomized": randomized,
                         "in_use": in_use,
-                        "channel": channel,
+                        "channel": prim_ch,
+                        "channel_peaks": {prim_ch: rssi},
+                        "on_channel_count": 1,
                         "angle": angle,
                         "rssi": rssi,
                         "ewma_rssi": float(rssi),
+                        "slow_ewma_rssi": float(rssi),
                         "peak_rssi": float(rssi),
                         "ewma_var": 2.0,
                         "z_score": 0.0,
@@ -196,22 +278,50 @@ class WifiEngine:
                     }
                     self._emitters[emitter_key] = state
                 else:
-                    # Update signal dynamics
-                    prev_ewma = float(state["ewma_rssi"])
-                    delta = float(rssi) - prev_ewma
-                    std = max(1.6, math.sqrt(max(1.0, float(state["ewma_var"]))))
-                    z = abs(delta) / std
-                    state["ewma_rssi"] = prev_ewma * 0.84 + float(rssi) * 0.16
-                    if z < 1.3:
-                        state["peak_rssi"] = max(float(state.get("peak_rssi", rssi)), float(state["ewma_rssi"]))
-                    state["ewma_var"] = float(state["ewma_var"]) * 0.85 + (delta * delta) * 0.15
-                    state["z_score"] = round(z, 3)
+                    ch_peaks: dict[int, int] = state.setdefault("channel_peaks", {})
+                    if channel > 0 and is_ap_rssi_sample:
+                        ch_peaks[channel] = max(ch_peaks.get(channel, -100), rssi)
+
+                    true_ch = known_true_ch
+                    if true_ch <= 0:
+                        if ch_peaks:
+                            true_ch = max(ch_peaks.items(), key=lambda kv: kv[1])[0]
+                        else:
+                            true_ch = int(state.get("channel", channel))
+
+                    state["channel"] = true_ch
+                    is_off_channel_bleed = (
+                        channel != true_ch
+                        and not is_threat_frame
+                        and float(rssi) < float(state["ewma_rssi"]) - 4.0
+                    )
+
+                    if not is_off_channel_bleed and is_ap_rssi_sample:
+                        state["on_channel_count"] = int(state.get("on_channel_count", 0)) + 1
+                        prev_ewma = float(state["ewma_rssi"])
+                        # If previous EWMA was seeded from a weak/off-channel frame and true on-channel signal is much stronger, snap to it
+                        if float(rssi) > prev_ewma + 8.0 and int(state.get("on_channel_count", 1)) <= 4:
+                            prev_ewma = float(rssi)
+                            state["ewma_rssi"] = float(rssi)
+                            state["peak_rssi"] = float(rssi)
+                        delta = float(rssi) - prev_ewma
+                        std = max(1.8, math.sqrt(max(1.2, float(state["ewma_var"]))))
+                        z = abs(delta) / std
+                        state["ewma_rssi"] = prev_ewma * 0.82 + float(rssi) * 0.18
+                        if int(state["on_channel_count"]) <= 8:
+                            state["slow_ewma_rssi"] = state["ewma_rssi"]
+                        else:
+                            prev_slow = float(state.get("slow_ewma_rssi", state["ewma_rssi"]))
+                            state["slow_ewma_rssi"] = prev_slow * 0.97 + float(state["ewma_rssi"]) * 0.03
+                        if z < 1.3:
+                            state["peak_rssi"] = max(float(state.get("peak_rssi", rssi)), float(state["ewma_rssi"]))
+                        state["ewma_var"] = float(state["ewma_var"]) * 0.85 + (delta * delta) * 0.15
+                        state["z_score"] = round(z, 3)
+                        inst_dist = min(1.0, (z / max(1.5, tripwire_z_thresh * 1.45)) * 0.75 + (abs(delta) / 18.0) * 0.25)
+                        state["disturbance"] = round(max(float(state["disturbance"]) * 0.55, inst_dist), 3)
+                        state["rssi"] = rssi
+
                     state.setdefault("subtypes", set()).add(subtype)
-                    # Instantaneous disturbance normalized [0..1]
-                    inst_dist = min(1.0, (z / max(1.5, tripwire_z_thresh * 1.45)) * 0.75 + (abs(delta) / 18.0) * 0.25)
-                    state["disturbance"] = round(max(float(state["disturbance"]) * 0.55, inst_dist), 3)
-                    state["rssi"] = rssi
-                    state["channel"] = channel or state["channel"]
                     if ssid:
                         state["ssid"] = ssid
                     if security:
@@ -220,6 +330,8 @@ class WifiEngine:
                         state["rate"] = rate
                     if in_use:
                         state["in_use"] = True
+                    if bssid != "ff:ff:ff:ff:ff:ff" and (state["bssid"] == "ff:ff:ff:ff:ff:ff" or not _is_valid_unicast_mac(state["bssid"])):
+                        state["bssid"] = bssid
                     state["last_seen"] = now
 
                 state["packet_count"] += 1
@@ -350,6 +462,9 @@ class WifiEngine:
         sensor_anchor = self._anchors.get("sensor", {"x": 0.50, "y": 0.68})
         sx, sy = sensor_anchor["x"], sensor_anchor["y"]
 
+        host_info = get_local_host_wifi_info()
+        connected_bssid = str(host_info.get("connected_bssid", "")).lower()
+
         entities: list[dict[str, Any]] = []
         links: list[dict[str, Any]] = []
         active_clients = 0
@@ -362,6 +477,22 @@ class WifiEngine:
             age = now - float(st["last_seen"])
             if age > self.window_seconds:
                 continue
+
+            ewma_rssi = float(st["ewma_rssi"])
+            pkt_cnt = int(st.get("packet_count", 0))
+
+            # Filter out distant neighbor client devices so the display focuses on the local space
+            if (
+                st["category"] == "client"
+                and not st.get("in_use")
+                and not st.get("threat")
+                and (
+                    (connected_bssid and st.get("bssid") not in {connected_bssid, "ff:ff:ff:ff:ff:ff"} and ewma_rssi < -60.0)
+                    or (ewma_rssi < -72.0 and st.get("bssid") != connected_bssid)
+                )
+            ):
+                continue
+
             recent_hits = sum(1 for t in st["recent_times"] if t >= cutoff_active)
             pps = round(recent_hits / 15.0, 2)
             fade = max(0.25, 1.0 - (age / self.window_seconds) * 0.75)
@@ -370,25 +501,42 @@ class WifiEngine:
                 px = self._anchors[key]["x"]
                 py = self._anchors[key]["y"]
             else:
-                dist = rssi_to_distance_norm(int(st["rssi"]))
+                eff_rssi = max(-32, int(round(ewma_rssi))) if (st["raw_mac"] in host_info.get("host_macs", set()) and st["category"] != "ap") else int(round(ewma_rssi))
+                dist = rssi_to_distance_norm(eff_rssi)
                 ang = float(st["angle"])
                 px = max(0.06, min(0.94, sx + dist * math.cos(ang)))
                 py = max(0.08, min(0.86, sy + dist * math.sin(ang) * 0.78))
 
             disturbance = float(st["disturbance"])
             z_score = float(st["z_score"])
-            max_z = max(max_z, z_score)
+            is_local_room = bool(st.get("in_use") or ewma_rssi >= -64.0 or st.get("bssid") == connected_bssid)
+            if is_local_room:
+                max_z = max(max_z, z_score)
 
             if st["category"] == "ap":
                 active_aps += 1
-                ap_disturbances.append(disturbance)
+                if is_local_room:
+                    ap_disturbances.append(disturbance)
             else:
-                active_clients += 1
-                if recent_hits >= 3:
+                is_local_client = bool(
+                    st.get("in_use")
+                    or (connected_bssid and st.get("bssid") == connected_bssid)
+                    or (not connected_bssid and ewma_rssi >= -68.0)
+                    or (st.get("bssid") == "ff:ff:ff:ff:ff:ff" and ewma_rssi >= -62.0)
+                )
+                if is_local_client:
+                    active_clients += 1
+                if recent_hits >= 3 and is_local_client:
                     probe_bursts += 1
 
-            cls_info = classify_rf_emitter(st)
-            display_label = st["anon_id"] if privacy_mode else (st["ssid"] or st["raw_mac"][-8:])
+            cls_info = classify_rf_emitter(st, host_info)
+            if privacy_mode:
+                display_label = st["anon_id"]
+            elif st["raw_mac"] in host_info.get("host_macs", set()) and st["category"] != "ap":
+                display_label = f"This PC ({st['raw_mac'][-8:]})"
+            else:
+                display_label = st["ssid"] or st["raw_mac"][-8:]
+
             entity = {
                 "id": st["anon_id"] if privacy_mode else key,
                 "raw_key": key,
@@ -405,7 +553,7 @@ class WifiEngine:
                 "threat": st.get("threat"),
                 "channel": st["channel"],
                 "rssi": st["rssi"],
-                "ewma_rssi": round(float(st["ewma_rssi"]), 1),
+                "ewma_rssi": round(ewma_rssi, 1),
                 "z_score": z_score,
                 "disturbance": disturbance,
                 "pps": pps,
@@ -417,7 +565,8 @@ class WifiEngine:
             }
             entities.append(entity)
 
-            if st["category"] == "ap" or st["in_use"]:
+            if (st["category"] == "ap" and (is_local_room or ewma_rssi >= -72.0)) or st["in_use"]:
+                delta_db = abs(float(st["rssi"]) - ewma_rssi)
                 links.append(
                     {
                         "id": f"link:{entity['id']}",
@@ -426,15 +575,22 @@ class WifiEngine:
                         "to_x": entity["x"],
                         "to_y": entity["y"],
                         "label": entity["label"],
+                        "channel": st["channel"],
                         "rssi": st["rssi"],
+                        "ewma_rssi": round(ewma_rssi, 1),
+                        "z_score": z_score,
                         "disturbance": disturbance,
-                        "crossing": z_score >= tripwire_z_thresh or disturbance >= 0.62,
+                        "is_local_room": is_local_room,
+                        "crossing": is_local_room and z_score >= tripwire_z_thresh and delta_db >= 3.5,
                     }
                 )
 
+        # Sort entities so local/in-use devices appear first
+        entities.sort(key=lambda e: (not bool(e.get("in_use")), -float(e.get("ewma_rssi", -100))))
+
         # Channel spectrum 1..13 utilization + overlap interference
         ch_counts: Counter[int] = Counter()
-        ch_ap_counts: Counter[int] = Counter()
+        ch_unique_aps: dict[int, set[str]] = {}
         ch_rssi: dict[int, list[int]] = {}
         slow_frames = 0
         for f in self._recent_frames:
@@ -442,32 +598,34 @@ class WifiEngine:
             if 1 <= ch <= 13:
                 ch_counts[ch] += 1
                 if f.get("is_ap"):
-                    ch_ap_counts[ch] += 1
+                    ch_unique_aps.setdefault(ch, set()).add(str(f.get("emitter_key", "")))
                 ch_rssi.setdefault(ch, []).append(int(f.get("rssi", -75)))
             rate = float(f.get("rate") or 0.0)
             if 0 < rate <= 5.5:
                 slow_frames += 1
 
-        max_ch_hits = max(ch_counts.values(), default=1)
         channels: list[dict[str, Any]] = []
         peak_congestion = 0.0
         best_channel = 1
         best_score = 999.0
         for ch in range(1, 14):
             direct = ch_counts.get(ch, 0)
+            unique_aps_on_ch = len(ch_unique_aps.get(ch, set()))
             overlap = sum(
                 ch_counts.get(other, 0) * (1.0 - abs(ch - other) * 0.25)
                 for other in range(max(1, ch - 3), min(14, ch + 4))
                 if other != ch
             )
-            congestion = min(1.0, (direct + overlap * 0.5) / max(8.0, float(max_ch_hits) * 1.35))
+            ap_load = min(0.45, unique_aps_on_ch * 0.09)
+            pkt_load = min(0.55, (direct + overlap * 0.25) / 550.0)
+            congestion = min(1.0, ap_load + pkt_load)
             peak_congestion = max(peak_congestion, congestion)
             mean_rssi = round(sum(ch_rssi[ch]) / len(ch_rssi[ch]), 1) if ch in ch_rssi else -95.0
             channels.append(
                 {
                     "channel": ch,
                     "frames": direct,
-                    "ap_count": ch_ap_counts.get(ch, 0),
+                    "ap_count": unique_aps_on_ch,
                     "congestion": round(congestion, 3),
                     "mean_rssi": mean_rssi,
                 }
@@ -523,7 +681,16 @@ class WifiEngine:
             wifi_mode=wifi_mode,
         )
 
-        class_counter: Counter[str] = Counter(str(e.get("object_class", "")) for e in all_entities)
+        # Count local/active room objects (devices on local AP or strong near-field <=10m)
+        local_entities = [
+            e for e in all_entities
+            if e.get("category") in {"human", "obstruction"}
+            or bool(e.get("in_use"))
+            or (connected_bssid and e.get("bssid") == connected_bssid)
+            or (not connected_bssid and float(e.get("ewma_rssi", -95.0)) >= -68.0)
+            or (e.get("category") == "ap" and float(e.get("ewma_rssi", -95.0)) >= -65.0)
+        ]
+        class_counter: Counter[str] = Counter(str(e.get("object_class", "")) for e in local_entities)
         object_counts = {
             "humans": class_counter.get("human_moving", 0)
             + class_counter.get("human_stationary", 0)
@@ -547,7 +714,6 @@ class WifiEngine:
                 "physical_obstruction",
                 "canary_hit",
                 "beacon_spam",
-                "channel_congestion",
             }:
                 alerts.append(
                     {

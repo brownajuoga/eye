@@ -117,12 +117,22 @@ def render_vision_jpeg(
             draw.text((ex + 17, ey - 8), f"[OBSTRUCTION] {ent.get('label', '')}", fill=pal["warn"] + (250,))
             continue
 
-        strength = max(0.2, min(1.0, (100 + rssi) / 65.0))
-        blob_r = int(15 + strength * 24 + dist * 18)
-        base_col = pal["alert"] if threat else (pal["warn"] if dist > 0.45 else (pal["primary"] if cat == "ap" else pal["secondary"]))
-        for scale, alpha_scale in ((1.0, 42), (0.62, 85), (0.28, 195)):
-            rr = max(4, int(blob_r * scale))
-            draw.ellipse([ex - rr, ey - rr, ex + rr, ey + rr], fill=base_col + (int(alpha_scale * fade),))
+        is_distant = float(ent.get("ewma_rssi", rssi)) < -74.0 and not bool(ent.get("in_use"))
+        strength = max(0.15, min(1.0, (100 + rssi) / 65.0))
+        blob_r = int((10 + strength * 12) if is_distant else (14 + strength * 22 + dist * 14))
+        base_col = (
+            pal["alert"]
+            if threat
+            else (
+                pal["warn"]
+                if (not is_distant and dist > 0.58)
+                else (pal["primary"] if cat == "ap" else pal["secondary"])
+            )
+        )
+        eff_fade = fade * (0.45 if is_distant else 1.0)
+        for scale, alpha_scale in ((1.0, 38), (0.62, 82), (0.28, 195)):
+            rr = max(3, int(blob_r * scale))
+            draw.ellipse([ex - rr, ey - rr, ex + rr, ey + rr], fill=base_col + (int(alpha_scale * eff_fade),))
 
         short_cls = {
             "smartphone": "PHONE",
@@ -132,9 +142,9 @@ def render_vision_jpeg(
             "smart_tv_media": "TV",
             "vehicle_drone": "DRONE/VEH",
         }.get(obj_cls, "DEV")
-        dist_str = f" {dist_m}m" if dist_m is not None else ""
-        label = f"[{short_cls}] {ent.get('label', '?')}{dist_str} ({rssi}dBm)"
-        draw.text((ex + 10, ey - 10), label, fill=base_col + (235,))
+        dist_str = f" ~{dist_m}m" if dist_m is not None else ""
+        label = f"[{short_cls}] {ent.get('label', '?')}{dist_str} ({int(round(float(ent.get('ewma_rssi', rssi))))}dBm)"
+        draw.text((ex + 10, ey - 10), label, fill=base_col + (int(235 * (0.65 if is_distant else 1.0)),))
 
     # Draw ESP8266 NodeMCU sensor marker
     draw.rectangle([sx - 8, sy - 8, sx + 8, sy + 8], fill=pal["secondary"] + (230,), outline=pal["primary"] + (255,), width=2)

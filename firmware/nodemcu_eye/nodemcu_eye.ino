@@ -183,7 +183,11 @@ static const char* subtype_name(uint8_t ftype, uint8_t fsub) {
       default: return "mgmt";
     }
   }
-  if (ftype == 1) return "ctrl";
+  if (ftype == 1) {
+    if (fsub == 8 || fsub == 9) return "block_ack";
+    if (fsub == 10 || fsub == 11) return "rts";
+    return "ctrl";
+  }
   if (ftype == 2) return "data";
   return "other";
 }
@@ -266,40 +270,30 @@ static void ICACHE_FLASH_ATTR promisc_cb(uint8_t* buf, uint16_t len) {
   uint8_t ftype = (fc0 >> 2) & 0x03;
   uint8_t fsub = (fc0 >> 4) & 0x0F;
 
-  volatile PacketSlot& slot = g_ring[g_ring_head];
-  slot.rssi = rx->rssi;
-  slot.channel = g_current_channel;
-  slot.frame_type = ftype;
-  slot.frame_subtype = fsub;
-  slot.rate = rx->rate;
-  slot.mcs = rx->MCS;
-  slot.sig_mode = rx->sig_mode;
-  slot.cwb = rx->CWB;
-  slot.pkt_len = actual_len;
-  slot.has_ssid = 0;
-  slot.ssid[0] = '\0';
+  // For 802.11 Control frames (ftype == 1):
+  // - ACK (13) and CTS (12) are 10-byte 1-address frames with NO Transmitter Address (addr2): drop them.
+  // - BlockAckReq (8), BlockAck (9), PS-Poll (10), RTS (11) are 2-address frames:
+  //   addr1 (payload+4) is Receiver, addr2 (payload+10) is Transmitter (NO addr3!).
+  if (ftype == 1 && (fsub < 8 || fsub > 11)) return;
 
-  // Address extraction based on IEEE 802.11 ToDS / FromDS flags
+  // Address extraction based on IEEE 802.11 frame type and ToDS / FromDS flags
   uint8_t to_ds = fc1 & 0x01;
   uint8_t from_ds = (fc1 >> 1) & 0x01;
+  if (ftype == 2 && to_ds == 1 && from_ds == 1) return; // Ignore 4-addr WDS frames
+
   const uint8_t* addr1 = payload + 4;
   const uint8_t* addr2 = payload + 10;
   const uint8_t* addr3 = payload + 16;
 
-  for (int i = 0; i < 6; i++) {
-    slot.sa[i] = addr2[i];
-    if (ftype == 0) {
-      slot.bssid[i] = addr3[i];
-    } else if (to_ds == 0 && from_ds == 1) {
-      slot.bssid[i] = addr2[i];
-    } else if (to_ds == 1 && from_ds == 0) {
-      slot.bssid[i] = addr1[i];
-    } else {
-      slot.bssid[i] = addr3[i];
-    }
-  }
+  // Transmitter (addr2) and Receiver (addr1, except broadcast) must be valid MACs
+  if ((addr2[0] & 0x01) != 0) return;
 
-  // Extract SSID Information Element (tag 0) on Beacon (8), ProbeReq (4), ProbeResp (5)
+  // Extract SSID (Tag 0) and True Operating Channel (DS Parameter Set Tag 3 / HT Op Tag 61)
+  char parsed_ssid[33];
+  parsed_ssid[0] = '\0';
+  uint8_t has_ssid = 0;
+  uint8_t ie_channel = 0;
+
   if (ftype == 0 && (fsub == 8 || fsub == 4 || fsub == 5)) {
     uint16_t ie_offset = (fsub == 4) ? 24 : 36; // Beacon/ProbeResp have 12-byte fixed params
     if (ie_offset + 2 < payload_cap) {
@@ -307,21 +301,66 @@ static void ICACHE_FLASH_ATTR promisc_cb(uint8_t* buf, uint16_t len) {
       while (pos + 2 <= payload_cap) {
         uint8_t tag = payload[pos];
         uint8_t tag_len = payload[pos + 1];
-        if (tag == 0) {
-          uint8_t copy_len = tag_len;
-          if (copy_len > 32) copy_len = 32;
-          if (pos + 2 + copy_len <= payload_cap) {
-            for (uint8_t k = 0; k < copy_len; k++) {
-              slot.ssid[k] = (char)payload[pos + 2 + k];
-            }
-            slot.ssid[copy_len] = '\0';
-            slot.has_ssid = 1;
-          }
-          break;
-        }
         if (pos + 2 + tag_len > payload_cap) break;
+
+        if (tag == 0 && !has_ssid) {
+          uint8_t copy_len = tag_len > 32 ? 32 : tag_len;
+          for (uint8_t k = 0; k < copy_len; k++) {
+            parsed_ssid[k] = (char)payload[pos + 2 + k];
+          }
+          parsed_ssid[copy_len] = '\0';
+          has_ssid = 1;
+        } else if (tag == 3 && tag_len == 1) {
+          uint8_t ch = payload[pos + 2];
+          if (ch >= 1 && ch <= 13) ie_channel = ch;
+        } else if (tag == 61 && tag_len >= 1 && ie_channel == 0) {
+          uint8_t ch = payload[pos + 2];
+          if (ch >= 1 && ch <= 13) ie_channel = ch;
+        }
         pos += 2 + tag_len;
       }
+    }
+  }
+
+  // Discard adjacent-channel sideband bleed on Beacons/ProbeResps so RSSI is only
+  // measured when the radio is tuned to the AP's actual primary channel.
+  if (ie_channel >= 1 && ie_channel <= 13 && ie_channel != g_current_channel) {
+    return;
+  }
+
+  volatile PacketSlot& slot = g_ring[g_ring_head];
+  slot.rssi = rx->rssi;
+  slot.channel = (ie_channel >= 1 && ie_channel <= 13) ? ie_channel : g_current_channel;
+  slot.frame_type = ftype;
+  slot.frame_subtype = fsub;
+  slot.rate = rx->rate;
+  slot.mcs = rx->MCS;
+  slot.sig_mode = rx->sig_mode;
+  slot.cwb = rx->CWB;
+  slot.pkt_len = actual_len;
+  slot.has_ssid = has_ssid;
+  for (uint8_t k = 0; k < 33; k++) {
+    slot.ssid[k] = parsed_ssid[k];
+    if (parsed_ssid[k] == '\0') break;
+  }
+
+  // Always record the actual physical RF transmitter (addr2 = TA) as `sa`
+  // so `slot.rssi` corresponds to the physical transmitter's distance.
+  for (int i = 0; i < 6; i++) {
+    slot.sa[i] = addr2[i];
+    if (ftype == 1) {
+      // 2-address Control frame (BA/BAR/PS-Poll/RTS): addr1 is the receiving peer/AP
+      slot.bssid[i] = addr1[i];
+    } else if (ftype == 0) {
+      slot.bssid[i] = addr3[i];
+    } else if (to_ds == 0 && from_ds == 1) {
+      // Downlink from AP (addr2) to Client (addr1): transmitter is the AP itself
+      slot.bssid[i] = addr2[i];
+    } else if (to_ds == 1 && from_ds == 0) {
+      // Uplink from Client (addr2) to AP (addr1): transmitter is the Client
+      slot.bssid[i] = addr1[i];
+    } else {
+      slot.bssid[i] = addr3[i];
     }
   }
 

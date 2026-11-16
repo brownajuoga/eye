@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
+import subprocess
+import time
 from typing import Any
 
 
@@ -50,7 +53,8 @@ OUI_VENDORS: dict[str, tuple[str, str]] = {
     "64:cc:2e": ("Xiaomi", "smartphone"),
     "7c:1d:d9": ("Xiaomi", "smartphone"),
     # PCs / Laptops
-    "44:1c:a8": ("Laptop Wi-Fi NIC", "laptop_pc"),
+    "44:1c:a8": ("This PC / Laptop NIC", "laptop_pc"),
+    "28:e6:a9": ("Client NIC", "laptop_pc"),
     "00:1b:21": ("Intel PC NIC", "laptop_pc"),
     "3c:97:0e": ("Intel PC NIC", "laptop_pc"),
     "68:05:ca": ("Intel PC NIC", "laptop_pc"),
@@ -82,17 +86,79 @@ CLASS_LABELS: dict[str, str] = {
     "unknown_device": "Wireless Device",
 }
 
+_HOST_CACHE: dict[str, Any] = {"ts": 0.0, "data": {}}
 
-def rssi_to_meters(rssi: float, *, tx_power_1m: float = -41.0, path_loss_n: float = 2.55) -> float:
-    """Estimate radial distance in meters from 2.4 GHz RSSI using log-distance path loss."""
-    clamped = max(-96.0, min(-22.0, float(rssi)))
+
+def get_local_host_wifi_info() -> dict[str, Any]:
+    """Discover local host Wi-Fi MAC, connected AP BSSID, SSID, and operating channel for ground-truth anchoring."""
+    now = time.time()
+    if now - float(_HOST_CACHE["ts"]) < 15.0 and _HOST_CACHE["data"]:
+        return _HOST_CACHE["data"]
+
+    info: dict[str, Any] = {
+        "host_macs": set(),
+        "connected_bssid": "",
+        "connected_ssid": "",
+        "connected_channel": 0,
+    }
+    try:
+        net_dir = Path("/sys/class/net")
+        if net_dir.exists():
+            for iface in net_dir.iterdir():
+                if iface.name.startswith(("wl", "wlan")):
+                    addr_file = iface / "address"
+                    if addr_file.exists():
+                        mac = addr_file.read_text(encoding="utf-8").strip().lower()
+                        if len(mac) == 17:
+                            info["host_macs"].add(mac)
+                    try:
+                        proc = subprocess.run(
+                            ["iw", "dev", iface.name, "link"],
+                            capture_output=True,
+                            text=True,
+                            timeout=1.2,
+                            check=False,
+                        )
+                        out = proc.stdout or ""
+                        for line in out.splitlines():
+                            s = line.strip()
+                            if s.startswith("Connected to "):
+                                bssid = s.split("Connected to ", 1)[1].split()[0].strip().lower()
+                                if len(bssid) == 17:
+                                    info["connected_bssid"] = bssid
+                            elif s.startswith("SSID:"):
+                                info["connected_ssid"] = s.split("SSID:", 1)[1].strip()
+                            elif s.startswith("freq:"):
+                                freq = float(s.split("freq:", 1)[1].strip().split()[0])
+                                if 2412 <= freq <= 2472:
+                                    info["connected_channel"] = int(round((freq - 2407) / 5))
+                                elif freq == 2484:
+                                    info["connected_channel"] = 14
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    _HOST_CACHE["ts"] = now
+    _HOST_CACHE["data"] = info
+    return info
+
+
+def rssi_to_meters(rssi: float, *, tx_power_1m: float = -38.0, path_loss_n: float = 2.4) -> float:
+    """Estimate radial distance in meters from 2.4 GHz on-channel RSSI using log-distance path loss."""
+    clamped = max(-96.0, min(-20.0, float(rssi)))
     meters = 10.0 ** ((tx_power_1m - clamped) / (10.0 * path_loss_n))
     return round(max(0.3, min(35.0, meters)), 1)
 
 
-def classify_rf_emitter(state: dict[str, Any]) -> dict[str, Any]:
+def classify_rf_emitter(state: dict[str, Any], host_info: dict[str, Any] | None = None) -> dict[str, Any]:
     """Classify a tracked Wi-Fi emitter into a physical object/device category with distance & mobility."""
+    host_info = host_info or {}
+    host_macs: set[str] = host_info.get("host_macs", set())
+    connected_bssid: str = str(host_info.get("connected_bssid", "")).lower()
+
     raw_mac = str(state.get("raw_mac") or state.get("bssid") or "").lower()
+    bssid = str(state.get("bssid") or "").lower()
     oui = raw_mac[:8]
     ssid = str(state.get("ssid") or "").strip()
     ssid_low = ssid.lower()
@@ -108,8 +174,11 @@ def classify_rf_emitter(state: dict[str, Any]) -> dict[str, Any]:
 
     vendor_name, oui_class = OUI_VENDORS.get(oui, ("", ""))
 
-    # 1. Determine object class from OUI, SSID keywords, frame subtypes, and MAC randomization
-    if threat:
+    # 1. Ground-truth host check first
+    if raw_mac in host_macs and not is_ap:
+        obj_class = "laptop_pc"
+        vendor_name = "Host PC (This Machine)"
+    elif threat:
         obj_class = "threat"
     elif any(k in ssid_low for k in ("dji", "tello", "mavic", "gopro", "70mai", "dashcam", "carplay", "tesla", "uconnect")):
         obj_class = "vehicle_drone"
@@ -129,16 +198,18 @@ def classify_rf_emitter(state: dict[str, Any]) -> dict[str, Any]:
             vendor_name = "Mobile Hotspot"
     elif is_ap:
         obj_class = oui_class if oui_class in {"iot_device", "vehicle_drone", "smart_tv_media"} else "wifi_ap"
-        if not vendor_name:
+        if raw_mac == connected_bssid or bssid == connected_bssid:
+            vendor_name = f"{vendor_name or 'Primary AP'} (Connected)"
+        elif not vendor_name:
             vendor_name = "2.4 GHz AP" if not randomized else "SoftAP / Hotspot"
-    elif oui_class:
+    elif oui_class and oui_class != "wifi_ap":
         obj_class = oui_class
     elif randomized:
         obj_class = "smartphone"
-        vendor_name = "Mobile (Randomized MAC)"
-    elif rate >= 54.0 or "qos_data" in subtypes:
-        obj_class = "laptop_pc"
-        vendor_name = vendor_name or "High-Rate Client"
+        vendor_name = "Smartphone (Private MAC)"
+    elif "block_ack" in subtypes or "data" in subtypes or rate >= 54.0 or "qos_data" in subtypes:
+        obj_class = "laptop_pc" if not randomized else "smartphone"
+        vendor_name = vendor_name or ("High-Rate Client" if not randomized else "Active Mobile")
     elif "probe_req" in subtypes or "null_data" in subtypes:
         obj_class = "smartphone"
         vendor_name = vendor_name or "Mobile Client"
@@ -146,11 +217,18 @@ def classify_rf_emitter(state: dict[str, Any]) -> dict[str, Any]:
         obj_class = "unknown_device"
         vendor_name = vendor_name or "Wi-Fi Transceiver"
 
-    distance_m = rssi_to_meters(ewma_rssi)
+    if raw_mac in host_macs and not is_ap:
+        distance_m = min(0.6, rssi_to_meters(max(-34.0, ewma_rssi)))
+    else:
+        distance_m = rssi_to_meters(ewma_rssi)
     delta_db = abs(rssi - ewma_rssi)
-    if z_score >= 2.6 or delta_db >= 9.0:
+
+    # Host PC and APs are physically fixed unless an extreme disturbance occurs
+    if raw_mac in host_macs or is_ap:
+        mobility = "moving" if (z_score >= 2.8 and delta_db >= 6.0) else "stationary"
+    elif z_score >= 3.0 and delta_db >= 8.0:
         mobility = "fast_moving"
-    elif z_score >= 1.4 or disturbance >= 0.35 or delta_db >= 4.0:
+    elif z_score >= 2.1 and delta_db >= 4.5:
         mobility = "moving"
     else:
         mobility = "stationary"
@@ -175,30 +253,36 @@ def infer_humans_and_obstructions(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Synthesizes spatial Human (`human_moving`, `human_stationary`, `human_rapid_motion`)
-    and Physical Obstruction (`physical_obstruction`) entities + detections from RF field state.
+    and Physical Obstruction (`physical_obstruction`) entities + detections from LOCAL in-room RF links.
+    Ignores weak distant neighbor AP noise (< -64 dBm) to prevent false alarms.
     """
     inferred_entities: list[dict[str, Any]] = []
     inferred_detections: list[dict[str, Any]] = []
 
-    # 1. Detect Moving Humans & Rapid Motion across disturbed Fresnel links
+    # 1. Detect Moving Humans & Rapid Motion ONLY on strong local in-room links (ewma_rssi >= -64 dBm)
     for idx, link in enumerate(links):
-        dist = float(link.get("disturbance", 0.0))
+        if not bool(link.get("is_local_room", False)):
+            continue
         crossing = bool(link.get("crossing", False))
-        if not crossing and dist < 0.38:
+        dist = float(link.get("disturbance", 0.0))
+        z_val = float(link.get("z_score", 0.0))
+        delta_db = abs(float(link.get("rssi", -50)) - float(link.get("ewma_rssi", -50)))
+
+        # Require genuine on-channel link perturbation, not minor thermal jitter
+        if not crossing or z_val < tripwire_z_thresh or delta_db < 3.5:
             continue
 
         fx, fy = float(link.get("from_x", sensor_x)), float(link.get("from_y", sensor_y))
         tx, ty = float(link.get("to_x", 0.5)), float(link.get("to_y", 0.3))
-        # Place inferred human along the Fresnel zone between sensor and anchor AP
-        hx = round(fx * 0.54 + tx * 0.46, 4)
-        hy = round(fy * 0.54 + ty * 0.46, 4)
-        rssi = int(link.get("rssi", -60))
-        human_dist_m = round(max(0.4, rssi_to_meters(rssi) * 0.52), 1)
+        hx = round(fx * 0.55 + tx * 0.45, 4)
+        hy = round(fy * 0.55 + ty * 0.45, 4)
+        ewma_rssi = float(link.get("ewma_rssi", link.get("rssi", -48)))
+        human_dist_m = round(max(0.4, rssi_to_meters(ewma_rssi) * 0.55), 1)
 
-        is_rapid = dist >= 0.85
+        is_rapid = z_val >= 3.1 or delta_db >= 12.0
         h_class = "human_rapid_motion" if is_rapid else "human_moving"
-        h_label = "Human (Rapid Motion)" if is_rapid else "Human (Walking)"
-        conf = round(min(0.96, 0.58 + dist * 0.38), 3)
+        h_label = "Human (Rapid Motion)" if is_rapid else "Human (Moving)"
+        conf = round(min(0.96, 0.62 + min(0.34, (z_val - tripwire_z_thresh) * 0.15 + delta_db * 0.015)), 3)
 
         inferred_entities.append(
             {
@@ -211,18 +295,18 @@ def infer_humans_and_obstructions(
                 "category": "human",
                 "object_class": h_class,
                 "object_label": h_label,
-                "vendor": "RF Body Reflection / Shadow",
+                "vendor": f"Fresnel Link Shadow ({delta_db:.1f}dB Δ)",
                 "distance_m": human_dist_m,
                 "mobility": "fast_moving" if is_rapid else "moving",
                 "threat": None,
-                "channel": 6,
-                "rssi": rssi,
-                "ewma_rssi": float(rssi),
-                "z_score": round(dist * 3.0, 2),
+                "channel": int(link.get("channel", 6)),
+                "rssi": int(link.get("rssi", -50)),
+                "ewma_rssi": round(ewma_rssi, 1),
+                "z_score": round(z_val, 2),
                 "disturbance": dist,
                 "pps": 1.0,
                 "randomized": False,
-                "in_use": False,
+                "in_use": True,
                 "fade": 1.0,
                 "x": hx,
                 "y": hy,
@@ -235,23 +319,22 @@ def infer_humans_and_obstructions(
                 "box": _norm_to_box(hx, hy, radius_px=34),
                 "model": "rf_human_sensing",
                 "track_id": 8100 + idx,
-                "reason": f"{h_label} detected across '{link.get('label', 'AP')}' link (~{human_dist_m}m, energy={dist:.2f})",
+                "reason": f"{h_label} across local '{link.get('label', 'AP')}' link (~{human_dist_m}m, Δ={delta_db:.1f}dB, z={z_val:.2f})",
             }
         )
 
-    # 2. Detect Stationary / Present Humans near mobile/personal devices or near-field micro-variance
+    # 2. Detect Stationary / Present Human operator near active in-room workstation/phone (<= 6.8m)
     near_personal = [
         ent for ent in entities
         if ent.get("object_class") in {"smartphone", "laptop_pc"}
-        and float(ent.get("distance_m", 99.0)) <= 10.0
+        and (bool(ent.get("in_use")) or float(ent.get("distance_m", 99.0)) <= 6.8)
     ]
     if near_personal and not inferred_entities:
-        # Cluster around strongest personal device signature
-        primary = max(near_personal, key=lambda e: int(e.get("rssi", -95)))
-        px = min(0.92, max(0.08, float(primary["x"]) + 0.03))
-        py = min(0.84, max(0.10, float(primary["y"]) + 0.02))
-        dist_m = float(primary.get("distance_m", 2.5))
-        conf = round(min(0.91, 0.62 + len(near_personal) * 0.07), 3)
+        primary = min(near_personal, key=lambda e: float(e.get("distance_m", 99.0)))
+        px = min(0.90, max(0.10, float(primary["x"]) + 0.025))
+        py = min(0.84, max(0.10, float(primary["y"]) - 0.02))
+        dist_m = float(primary.get("distance_m", 0.8))
+        conf = round(min(0.92, 0.68 + len(near_personal) * 0.06), 3)
         inferred_entities.append(
             {
                 "id": "human:presence:0",
@@ -263,19 +346,19 @@ def infer_humans_and_obstructions(
                 "category": "human",
                 "object_class": "human_stationary",
                 "object_label": "Human (Present)",
-                "vendor": "Near-Field Personal RF + Micro-Variance",
+                "vendor": "Active Near-Field Workstation / Mobile",
                 "distance_m": dist_m,
                 "mobility": "stationary",
                 "threat": None,
                 "channel": int(primary.get("channel", 6)),
-                "rssi": int(primary.get("rssi", -60)),
-                "ewma_rssi": float(primary.get("ewma_rssi", -60.0)),
-                "z_score": float(primary.get("z_score", 0.4)),
-                "disturbance": max(0.2, float(primary.get("disturbance", 0.2))),
-                "pps": float(primary.get("pps", 0.5)),
+                "rssi": int(primary.get("rssi", -40)),
+                "ewma_rssi": float(primary.get("ewma_rssi", -40.0)),
+                "z_score": float(primary.get("z_score", 0.3)),
+                "disturbance": max(0.15, float(primary.get("disturbance", 0.15))),
+                "pps": float(primary.get("pps", 1.0)),
                 "randomized": False,
-                "in_use": False,
-                "fade": 0.95,
+                "in_use": True,
+                "fade": 0.96,
                 "x": round(px, 4),
                 "y": round(py, 4),
             }
@@ -287,20 +370,24 @@ def infer_humans_and_obstructions(
                 "box": _norm_to_box(px, py, radius_px=30),
                 "model": "rf_human_sensing",
                 "track_id": 8200,
-                "reason": f"Human presence inferred at ~{dist_m}m ({len(near_personal)} personal RF signature(s) in room)",
+                "reason": f"Human operator present at ~{dist_m}m ({len(near_personal)} active in-room personal device(s))",
             }
         )
 
-    # 3. Detect Physical Obstruction (Door Closed / Dense Object Shadowing)
+    # 3. Detect Physical Obstruction ONLY when short-term EWMA drops >= 9 dB below settled slow baseline
     for idx, (key, st) in enumerate(emitters_state.items()):
         if st.get("category") != "ap":
             continue
-        peak_rssi = float(st.get("peak_rssi", st.get("ewma_rssi", -60.0)))
-        ewma_rssi = float(st.get("ewma_rssi", -60.0))
+        on_ch_cnt = int(st.get("on_channel_count", st.get("packet_count", 0)))
+        if on_ch_cnt < 18:
+            continue
+        slow_baseline = float(st.get("slow_ewma_rssi", st.get("ewma_rssi", -80.0)))
+        ewma_rssi = float(st.get("ewma_rssi", -80.0))
+        if slow_baseline < -64.0:
+            continue
         z_score = float(st.get("z_score", 0.0))
-        attenuation_db = peak_rssi - ewma_rssi
-        if attenuation_db >= 7.5 and z_score < max(1.6, tripwire_z_thresh * 0.8) and int(st.get("packet_count", 0)) >= 6:
-            # Find matching entity coordinates
+        attenuation_db = slow_baseline - ewma_rssi
+        if attenuation_db >= 8.5 and z_score < 1.2:
             match_ent = next((e for e in entities if e.get("raw_key") == key), None)
             if not match_ent:
                 continue
@@ -318,12 +405,12 @@ def infer_humans_and_obstructions(
                     "category": "obstruction",
                     "object_class": "physical_obstruction",
                     "object_label": "Door / Object Obstruction",
-                    "vendor": f"{attenuation_db:.1f} dB Sustained Shadowing",
+                    "vendor": f"{attenuation_db:.1f} dB Sustained Link Shadowing",
                     "distance_m": dist_m,
                     "mobility": "stationary",
                     "threat": None,
                     "channel": int(st.get("channel", 6)),
-                    "rssi": int(st.get("rssi", -75)),
+                    "rssi": int(st.get("rssi", -60)),
                     "ewma_rssi": round(ewma_rssi, 1),
                     "z_score": round(z_score, 2),
                     "disturbance": 0.5,
@@ -338,11 +425,11 @@ def infer_humans_and_obstructions(
             inferred_detections.append(
                 {
                     "label": "physical_obstruction",
-                    "confidence": round(min(0.92, 0.55 + attenuation_db * 0.03), 3),
+                    "confidence": round(min(0.92, 0.58 + attenuation_db * 0.025), 3),
                     "box": _norm_to_box(ox, oy, radius_px=28),
                     "model": "rf_obstruction_detector",
                     "track_id": 8300 + idx,
-                    "reason": f"Sustained {attenuation_db:.1f} dB attenuation on '{st.get('ssid') or key}' (door or dense object obstruction)",
+                    "reason": f"Sustained {attenuation_db:.1f} dB attenuation on local AP '{st.get('ssid') or key}'",
                 }
             )
 

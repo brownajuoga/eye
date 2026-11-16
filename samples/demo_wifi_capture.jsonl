@@ -1,0 +1,14 @@
+{"ts_sec":0.0,"channel":6,"rssi":-44,"frame_type":"mgmt","subtype":"beacon","sa":"50:14:c1:e3:76:1c","bssid":"50:14:c1:e3:76:1c","ssid":"Home_Core_AP","security":"WPA2","rate":130,"in_use":true}
+{"ts_sec":0.2,"channel":11,"rssi":-63,"frame_type":"mgmt","subtype":"beacon","sa":"8a:74:77:60:13:d4","bssid":"8a:74:77:60:13:d4","ssid":"Neighbor_Mesh","security":"WPA2","rate":72}
+{"ts_sec":1.0,"channel":6,"rssi":-45,"frame_type":"mgmt","subtype":"beacon","sa":"50:14:c1:e3:76:1c","bssid":"50:14:c1:e3:76:1c","ssid":"Home_Core_AP","security":"WPA2","rate":130,"in_use":true}
+{"ts_sec":1.2,"channel":6,"rssi":-57,"frame_type":"mgmt","subtype":"probe_req","sa":"da:a1:19:10:20:30","bssid":"ff:ff:ff:ff:ff:ff","ssid":"Home_Core_AP","randomized":true,"rate":24}
+{"ts_sec":2.0,"channel":6,"rssi":-67,"frame_type":"mgmt","subtype":"beacon","sa":"50:14:c1:e3:76:1c","bssid":"50:14:c1:e3:76:1c","ssid":"Home_Core_AP","security":"WPA2","rate":54,"in_use":true}
+{"ts_sec":2.1,"channel":6,"rssi":-52,"frame_type":"mgmt","subtype":"probe_req","sa":"f2:8b:40:01:12:22","bssid":"ff:ff:ff:ff:ff:ff","ssid":"CafeFree","randomized":true,"rate":12}
+{"ts_sec":3.0,"channel":6,"rssi":-69,"frame_type":"mgmt","subtype":"beacon","sa":"50:14:c1:e3:76:1c","bssid":"50:14:c1:e3:76:1c","ssid":"Home_Core_AP","security":"WPA2","rate":48,"in_use":true}
+{"ts_sec":4.0,"channel":6,"rssi":-46,"frame_type":"mgmt","subtype":"beacon","sa":"50:14:c1:e3:76:1c","bssid":"50:14:c1:e3:76:1c","ssid":"Home_Core_AP","security":"WPA2","rate":130,"in_use":true}
+{"ts_sec":4.1,"channel":6,"rssi":-48,"frame_type":"mgmt","subtype":"deauth","sa":"de:ad:be:ef:00:99","bssid":"50:14:c1:e3:76:1c","ssid":"Home_Core_AP"}
+{"ts_sec":4.2,"channel":6,"rssi":-47,"frame_type":"mgmt","subtype":"deauth","sa":"de:ad:be:ef:00:99","bssid":"50:14:c1:e3:76:1c","ssid":"Home_Core_AP"}
+{"ts_sec":4.3,"channel":6,"rssi":-48,"frame_type":"mgmt","subtype":"deauth","sa":"de:ad:be:ef:00:99","bssid":"50:14:c1:e3:76:1c","ssid":"Home_Core_AP"}
+{"ts_sec":4.4,"channel":6,"rssi":-49,"frame_type":"mgmt","subtype":"deauth","sa":"de:ad:be:ef:00:99","bssid":"50:14:c1:e3:76:1c","ssid":"Home_Core_AP"}
+{"ts_sec":4.5,"channel":6,"rssi":-48,"frame_type":"mgmt","subtype":"deauth","sa":"de:ad:be:ef:00:99","bssid":"50:14:c1:e3:76:1c","ssid":"Home_Core_AP"}
+{"ts_sec":5.0,"channel":6,"rssi":-38,"frame_type":"mgmt","subtype":"beacon","sa":"66:77:88:99:aa:bb","bssid":"66:77:88:99:aa:bb","ssid":"Home_Core_AP","security":"OPEN","rate":54}

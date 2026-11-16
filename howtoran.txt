@@ -1,101 +1,54 @@
-How to run eye
-==============
+How to run eye (Wi-Fi Surveillance & RF Intelligence Platform)
+===============================================================
 
-This project runs as three cooperating pieces:
+1. Python Wi-Fi Intelligence Server (ai_server)
+------------------------------------------------
+  cd /home/brown/me/eye
+  ai_server/venv/bin/python ai_server/main.py
 
-1. Python FastAPI backend in ai_server
-2. Go Scout capture/motion process in scout
-3. Flutter UI in ui
-
-Recommended terminal layout
----------------------------
-
-Terminal 1 - start the AI backend:
-
-  cd /home/aabrown/me/eye/eye
-  python3 -m venv .venv
-  . .venv/bin/activate
-  pip install fastapi uvicorn pillow pyyaml python-multipart opencv-python ultralytics
-  python3 ai_server/main.py
-
-The backend should be available at:
-
+Health check:
   http://127.0.0.1:8080/health
+Night-Vision MJPEG stream:
+  http://127.0.0.1:8080/wifi/stream.mjpeg
 
-Terminal 2 - run Scout with a camera:
+2. Go Edge Collector (scout) - Optional when using In-App Host Scan / Simulator
+-------------------------------------------------------------------------------
+Rebuild if modified:
+  cd /home/brown/me/eye/scout
+  go build -o scout .
 
-  cd /home/aabrown/me/eye/eye/scout
-  go run . detect -source auto -api-url http://127.0.0.1:8080 -headless
+Discover available serial / Wi-Fi devices:
+  ./scout sources
 
-Useful Scout source examples:
+Stream from auto-detected source (NodeMCU USB -> Host Wi-Fi -> Simulator):
+  ./scout detect -source auto -api-url http://127.0.0.1:8080
 
-  go run . sources
-  go run . detect -source 0 -api-url http://127.0.0.1:8080
-  go run . detect -source /path/to/video.mp4 -api-url http://127.0.0.1:8080 -headless
-  go run . detect -source /path/to/media-folder -api-url http://127.0.0.1:8080 -headless
-  go run . detect -source rtsp://camera/stream -api-url http://127.0.0.1:8080 -headless
-  go run . detect -sources 0,/path/to/video.mp4 -api-url http://127.0.0.1:8080 -headless
+Stream specifically from plugged NodeMCU USB Serial:
+  ./scout detect -source nodemcu -device /dev/ttyUSB0 -api-url http://127.0.0.1:8080
 
-Terminal 3 - run the Flutter UI:
+Start bridge listener for unplugged NodeMCU nodes:
+  ./scout bridge -listen :8090 -api-url http://127.0.0.1:8080
 
-  cd /home/aabrown/me/eye/eye/ui
+Run realistic RF scenario simulator:
+  ./scout sim -scenario motion -api-url http://127.0.0.1:8080
+  # scenarios: mixed, motion, deauth, evil_twin, crowd, congestion, quiet
+
+3. Flutter Night-Vision Control Center (ui)
+-------------------------------------------
+  cd /home/brown/me/eye/ui
   flutter pub get
-  flutter run -d linux
-
-For the web UI:
-
-  cd /home/aabrown/me/eye/eye/ui
   flutter run -d chrome --dart-define=EYE_API_BASE_URL=http://127.0.0.1:8080
 
-What should work
-----------------
+4. NodeMCU ESP8266 Flashing (firmware/nodemcu_eye)
+--------------------------------------------------
+Open firmware/nodemcu_eye/nodemcu_eye.ino in Arduino IDE (NodeMCU 1.0 ESP-12E)
+or use PlatformIO (`cd firmware/nodemcu_eye && pio run -t upload`).
 
-- Dashboard shows backend runtime and latest frame after Scout sends a frame.
-- Feed Monitor shows live/recorded sources registered by Scout.
-- Video Analysis > Analyze Video opens a video picker and posts the file to the backend.
-- Video Analysis source chips generate working Scout commands for camera, video file, folder, and RTSP input.
-- Automation Rules run in the realtime path before optional expert review.
-- Expert realtime review is off by default so CPU machines do not continuously run LLM/VLM inference.
+When unplugged, hold FLASH (D3/GPIO0) for 2s to start AP "EYE-NODE-SETUP"
+and open http://192.168.4.1 to enter your Wi-Fi credentials & server URL.
 
 Verification commands
 ---------------------
-
-Python backend tests:
-
-  cd /home/aabrown/me/eye/eye
-  python3 -m unittest discover tests
-
-Scout build/test:
-
-  cd /home/aabrown/me/eye/eye/scout
-  go test ./...
-
-UI analysis:
-
-  cd /home/aabrown/me/eye/eye/ui
-  flutter analyze
-
-If Scout cannot find a camera
------------------------------
-
-Run:
-
-  cd /home/aabrown/me/eye/eye/scout
-  go run . sources
-
-Then use a detected index:
-
-  go run . detect -source 0 -api-url http://127.0.0.1:8080
-
-If you are on WSL, direct webcam access may not be available. Use a video file, a media folder, or an RTSP stream instead.
-
-Integrated surveillance ideas
------------------------------
-
-The app now follows the CPU-first pattern from practical surveillance systems:
-
-- YOLO/object detection remains the fast realtime layer.
-- Rule decisions are used before heavyweight reasoning.
-- Retail-style rules cover person plus handbag/bottle interactions.
-- Abnormal-event thinking is represented as configurable automation rules and source-specific review.
-- Optional expert reasoning can be enabled only for important events.
+  ai_server/venv/bin/python -m unittest discover -s tests -v
+  cd scout && go test -v ./...
+  cd ui && flutter analyze && flutter test

@@ -13,6 +13,14 @@ from PIL import Image
 
 JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 VALID_ACTIONS = {"alert", "ignore"}
+WIFI_HIGH_PRIORITY = {
+    "deauth_flood",
+    "evil_twin",
+    "canary_hit",
+    "beacon_spam",
+    "rssi_tripwire_motion",
+    "channel_congestion",
+}
 
 
 class ExpertSystem:
@@ -70,6 +78,7 @@ class ExpertSystem:
         feed_id: str | None,
         feeds: list[dict[str, Any]] | None = None,
         models: list[dict[str, Any]] | None = None,
+        vision: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         backend_name = str(policy["expert"].get("backend", "mock")).lower()
         plan = build_operator_plan(
@@ -80,6 +89,7 @@ class ExpertSystem:
             feed_id=feed_id,
             feeds=feeds or [],
             models=models or [],
+            vision=vision,
         )
         if backend_name == "mock":
             reply = MockExpert().chat(
@@ -89,6 +99,7 @@ class ExpertSystem:
                 latest_result=latest_result,
                 feed_id=feed_id,
                 plan=plan,
+                vision=vision,
             )
             reply["plan"] = plan
             reply["evidence"] = plan.get("evidence", [])
@@ -194,22 +205,29 @@ class MockExpert:
         event: dict[str, Any],
         policy: dict[str, Any],
     ) -> dict[str, Any]:
-        labels = [item.get("label") for item in detections]
+        labels = [str(item.get("label", "")) for item in detections]
+        label_set = set(labels)
         repeated_bottle = sum("bottle" in [d.get("label") for d in item.get("detections", [])] for item in memory)
         expert_cfg = policy.get("expert", {})
         task_profile = str(expert_cfg.get("task_profile", "general")).lower()
         active_task = str(expert_cfg.get("active_task", "")).lower()
         operator_instructions = str(expert_cfg.get("operator_instructions", "")).lower()
 
-        if event.get("important") and ("person" in labels and any(label in labels for label in ("backpack", "handbag", "cell phone", "bottle"))):
+        wifi_hits = [lbl for lbl in labels if lbl in WIFI_HIGH_PRIORITY]
+        if wifi_hits:
+            action = "alert"
+            top_reasons = [str(d.get("reason", "")) for d in detections if d.get("label") in WIFI_HIGH_PRIORITY and d.get("reason")]
+            reason = top_reasons[0] if top_reasons else f"Wi-Fi intelligence alert: {', '.join(sorted(set(wifi_hits)))}"
+            confidence = max(float(d.get("confidence", 0.75)) for d in detections if d.get("label") in WIFI_HIGH_PRIORITY)
+        elif event.get("important") and ("person" in label_set and any(lbl in label_set for lbl in ("backpack", "handbag", "cell phone", "bottle"))):
             action = "alert"
             reason = "Important watched objects interacting with a person"
             confidence = 0.84
         elif ("count" in active_task or "inventory" in operator_instructions) and labels:
             action = "alert"
-            reason = f"Task requested object accounting; observed: {', '.join(sorted(set(str(label) for label in labels if label)))}"
+            reason = f"Task requested accounting; observed: {', '.join(sorted(set(l for l in labels if l)))}"
             confidence = 0.77
-        elif task_profile in {"tracking", "security", "theft"} and "person" in labels and any(label in labels for label in ("bag", "backpack", "handbag", "cell phone")):
+        elif task_profile in {"tracking", "security", "theft"} and "person" in label_set and any(lbl in label_set for lbl in ("bag", "backpack", "handbag", "cell phone")):
             action = "alert"
             reason = "Task profile prioritizes person-object interactions"
             confidence = 0.81
@@ -219,7 +237,7 @@ class MockExpert:
             confidence = 0.74
         else:
             action = "ignore"
-            reason = event.get("reason", "No suspicious pattern detected")
+            reason = event.get("reason", "RF spectrum nominal")
             confidence = 0.42
 
         updates = []
@@ -230,7 +248,7 @@ class MockExpert:
             "action": action,
             "reason": reason,
             "update_watch_for": dedupe_strings(updates),
-            "confidence": confidence,
+            "confidence": round(confidence, 3),
             "task_summary": build_task_summary(policy, event, detections),
             "control": recommended_control_patch(policy, event, detections),
         }
@@ -244,14 +262,18 @@ class MockExpert:
         latest_result: dict[str, Any] | None,
         feed_id: str | None,
         plan: dict[str, Any],
+        vision: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         answer_parts = [str(plan.get("summary", "")).strip()]
         if plan.get("recommendation"):
             answer_parts.append(str(plan["recommendation"]))
-        if plan.get("resources"):
-            resource_desc = ", ".join(f"{key}={value}" for key, value in plan["resources"].items() if value not in (None, "", []))
-            if resource_desc:
-                answer_parts.append(f"Resource plan: {resource_desc}")
+        if vision:
+            occ = vision.get("occupancy", {})
+            metrics = vision.get("metrics", {})
+            answer_parts.append(
+                f"Live RF: {occ.get('active_aps', 0)} APs, {occ.get('active_clients', 0)} clients, "
+                f"disturbance={metrics.get('disturbance', 0):.2f}, cleanest Ch={metrics.get('recommended_channel', 1)}"
+            )
         return {
             "message": ". ".join(part for part in answer_parts if part) or f"Operator request received: {message}",
             "task_summary": str(plan.get("task_summary", "")),
@@ -323,7 +345,7 @@ class TransformersExpert:
     def __init__(self, model_id: str):
         try:
             from transformers import AutoModelForCausalLM, AutoTokenizer
-        except Exception as exc:  # pragma: no cover - optional dependency path
+        except Exception as exc:  # pragma: no cover
             raise RuntimeError("transformers backend is not available") from exc
 
         self.model_id = model_id
@@ -370,25 +392,18 @@ def build_prompt(
 ) -> str:
     expert_cfg = policy.get("expert", {})
     return (
-        "You are the central expert reasoning layer for an autonomous surveillance system.\n"
-        "You own reasoning quality, prioritization, and suggested control adaptations.\n"
+        "You are the central expert reasoning layer for a Wi-Fi surveillance and RF intelligence platform.\n"
         "Return STRICT JSON only.\n"
         "Required keys: action, reason, update_watch_for, confidence.\n"
         "Optional keys when useful: task_summary, control.\n"
         "Valid action values: alert or ignore.\n"
         f"Mission: {expert_cfg.get('mission', '')}\n"
         f"Active task: {expert_cfg.get('active_task', '')}\n"
-        f"Operator instructions: {expert_cfg.get('operator_instructions', '')}\n"
-        f"Task profile: {expert_cfg.get('task_profile', 'general')}\n"
+        f"Wi-Fi settings: {policy.get('wifi', {})}\n"
         f"Policy watch_for: {policy.get('watch_for', [])}\n"
-        f"Policy ignore: {policy.get('ignore', [])}\n"
-        f"Automation rules: {policy.get('automation_rules', [])}\n"
         f"Current event: {event}\n"
         f"Detections: {detections}\n"
         f"Recent memory: {memory}\n"
-        "If you suggest policy changes, keep update_watch_for short and concrete.\n"
-        "If task intent changes what matters in the scene, explain that in reason and task_summary.\n"
-        "If control changes are useful, return them in control as a small JSON object.\n"
     )
 
 
@@ -403,11 +418,9 @@ def build_chat_prompt(
 ) -> str:
     expert_cfg = policy.get("expert", {})
     return (
-        "You are the expert operator interface for the surveillance system.\n"
+        "You are the expert operator interface for the Wi-Fi RF intelligence system.\n"
         "Answer the operator directly and return STRICT JSON with keys: message, task_summary.\n"
         f"Mission: {expert_cfg.get('mission', '')}\n"
-        f"Active task: {expert_cfg.get('active_task', '')}\n"
-        f"Operator instructions: {expert_cfg.get('operator_instructions', '')}\n"
         f"Selected feed: {feed_id}\n"
         f"Latest result: {latest_result}\n"
         f"Recent memory: {memory}\n"
@@ -467,7 +480,8 @@ def build_fallback_decision(
     reason: str,
 ) -> dict[str, Any]:
     labels = {item.get("label") for item in detections}
-    action = "alert" if event.get("important") and "person" in labels else "ignore"
+    high_pri = "person" in labels or bool(labels.intersection(WIFI_HIGH_PRIORITY))
+    action = "alert" if event.get("important") and high_pri else "ignore"
     confidence = 0.55 if action == "alert" else 0.2
     return {
         "action": action,
@@ -495,7 +509,7 @@ def build_task_summary(policy: dict[str, Any], event: dict[str, Any], detections
     task = str(expert_cfg.get("active_task", "")).strip()
     mission = str(expert_cfg.get("mission", "")).strip()
     labels = sorted({str(item.get("label", "")) for item in detections if item.get("label")})
-    observed = ", ".join(labels) if labels else "no tracked objects"
+    observed = ", ".join(labels) if labels else "nominal RF field"
     parts = [part for part in [task or mission, f"Observed {observed}", str(event.get("reason", "")).strip()] if part]
     return " | ".join(parts)
 
@@ -506,7 +520,7 @@ def recommended_control_patch(
     detections: list[dict[str, Any]],
 ) -> dict[str, Any]:
     labels = {str(item.get("label", "")) for item in detections}
-    if event.get("important") and "person" in labels:
+    if event.get("important") and ("person" in labels or bool(labels.intersection(WIFI_HIGH_PRIORITY))):
         return {"mode": "performance"}
     if not detections and policy.get("controls", {}).get("auto_mode", True):
         return {"mode": "lightweight"}
@@ -529,6 +543,7 @@ def build_operator_plan(
     feed_id: str | None,
     feeds: list[dict[str, Any]],
     models: list[dict[str, Any]],
+    vision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text = message.lower()
     labels = extract_candidate_labels(message, policy, latest_result, feeds)
@@ -539,7 +554,7 @@ def build_operator_plan(
     routing_policy = policy.get("task_routing", {})
     plan = {
         "intent": "general_question",
-        "summary": "Review the current scene state and answer using available feed and memory context.",
+        "summary": "Review live RF telemetry, security alerts, and occupancy estimates.",
         "task_summary": "",
         "recommendation": "",
         "resources": {
@@ -554,7 +569,26 @@ def build_operator_plan(
     }
 
     latest_result = latest_result or {}
-    if any(phrase in text for phrase in ["when", "what time", "time did", "occurred", "happened"]):
+    if any(phrase in text for phrase in ["channel", "congestion", "interference", "spectrum"]):
+        metrics = (vision or {}).get("metrics", {})
+        best_ch = metrics.get("recommended_channel", 6)
+        peak = metrics.get("peak_congestion", 0.0)
+        plan["summary"] = f"2.4 GHz spectrum peak congestion is {int(float(peak) * 100)}%"
+        plan["recommendation"] = f"Channel {best_ch} is currently cleanest among 1/6/11"
+        plan["task_summary"] = "Spectrum congestion inspection"
+    elif any(phrase in text for phrase in ["deauth", "attack", "evil twin", "rogue", "security", "intrusion"]):
+        alerts = (vision or {}).get("alerts", [])
+        deauth = (vision or {}).get("metrics", {}).get("deauth_12s", 0)
+        plan["summary"] = f"WIDS observed {deauth} deauth/disassoc frames in the last 12s and {len(alerts)} recent alerts"
+        plan["recommendation"] = alerts[-1].get("reason", "No active WIDS attack") if alerts else "Spectrum looks clean of deauth/evil-twin signatures"
+        plan["task_summary"] = "WIDS security status"
+    elif any(phrase in text for phrase in ["people", "person", "occupancy", "room", "motion", "someone"]):
+        occ = (vision or {}).get("occupancy", {})
+        dist = (vision or {}).get("metrics", {}).get("disturbance", 0.0)
+        plan["summary"] = f"Estimated occupancy: {occ.get('estimate', 0)} ({occ.get('density', 'empty')}), RF disturbance={float(dist):.2f}"
+        plan["recommendation"] = "Enable Privacy Mode to hide client MAC identifiers while keeping occupancy and tripwire sensing active"
+        plan["task_summary"] = "RF occupancy & motion check"
+    elif any(phrase in text for phrase in ["when", "what time", "time did", "occurred", "happened"]):
         plan["intent"] = "event_time_query"
         if labels:
             target = labels[0]
@@ -564,51 +598,39 @@ def build_operator_plan(
             ]
             first = matching[0] if matching else None
             last = matching[-1] if matching else None
-            plan["summary"] = f"Search memory for when '{target}' appeared and report the earliest and latest matching events."
+            plan["summary"] = f"Search memory for when '{target}' appeared"
             plan["task_summary"] = f"Event timing query for {target}"
             if first:
                 plan["evidence"].append({"type": "first_seen", "label": target, "timestamp": first.get("timestamp"), "source": first.get("source")})
             if last and last is not first:
                 plan["evidence"].append({"type": "last_seen", "label": target, "timestamp": last.get("timestamp"), "source": last.get("source")})
-            if matching:
-                plan["recommendation"] = f"{target} was seen {len(matching)} times in recent memory."
-            else:
-                plan["recommendation"] = f"No recent memory event matched {target}."
+            plan["recommendation"] = (
+                f"{target} was seen {len(matching)} times in recent memory." if matching else f"No recent memory event matched {target}."
+            )
         else:
-            plan["recommendation"] = "No target object was identified from the timing question."
+            plan["recommendation"] = "No target RF signature identified from the timing question."
     elif any(phrase in text for phrase in ["find", "search", "look for", "track", "locate"]):
         plan["intent"] = "object_search"
         target = labels[0] if labels else ""
-        plan["summary"] = (
-            f"Search current feeds and recent memory for '{target}' and prioritize feeds where it is visible."
-            if target else
-            "Search current feeds and recent memory for the requested object."
-        )
-        plan["task_summary"] = f"Object search for {target or 'requested target'}"
+        plan["summary"] = f"Search feeds and RF memory for '{target or 'target signal'}'"
+        plan["task_summary"] = f"Signal search for {target or 'requested target'}"
         for feed in feeds:
-            feed_labels = {str(det.get('label', '')).lower() for det in feed.get("detections", [])}
+            feed_labels = {str(det.get("label", "")).lower() for det in feed.get("detections", [])}
             if not target or target in feed_labels:
-                plan["actions"].append({"type": "inspect_feed", "feed": feed.get("id"), "reason": "target present in latest detections"})
+                plan["actions"].append({"type": "inspect_feed", "feed": feed.get("id"), "reason": "target present"})
                 plan["evidence"].append({"type": "feed_match", "feed": feed.get("id"), "labels": sorted(feed_labels)})
-        if not plan["actions"]:
-            plan["recommendation"] = f"No live feed currently shows {target or 'the requested target'}; relying on recent memory."
-        else:
-            plan["recommendation"] = f"Prioritize {len(plan['actions'])} feed(s) for the requested search."
-    elif any(phrase in text for phrase in ["switch model", "change model", "use model", "weight"]):
-        plan["intent"] = "resource_switch"
-        plan["summary"] = "Review available models and recommend the most suitable weight for the requested task."
-        plan["task_summary"] = "Model and resource planning"
-        for model in models:
-            plan["evidence"].append({"type": "model", "name": model.get("name"), "active": model.get("active", False)})
-        plan["recommendation"] = "Use a lightweight model for broad live scans and switch to the highest-capability available weight when precision is explicitly requested."
+        plan["recommendation"] = (
+            f"Prioritize {len(plan['actions'])} feed(s)" if plan["actions"] else "No live feed currently matches; relying on memory"
+        )
     else:
         detections = latest_result.get("detections", [])
         plan["task_summary"] = build_task_summary(policy, latest_result.get("event", {}), detections)
         if detections:
             plan["evidence"].append({"type": "latest_detections", "labels": [item.get("label") for item in detections]})
-            plan["recommendation"] = "Answer grounded in the latest scene and recent memory."
+            plan["recommendation"] = "Answer grounded in the latest RF scene and recent memory"
         else:
-            plan["recommendation"] = "No immediate detections are available; answer from recent memory and current policy."
+            plan["recommendation"] = "System is ready; start Host Wi-Fi, Simulator, or NodeMCU sensor stream"
+
     route = routing_policy.get(plan["intent"], {})
     if isinstance(route, dict):
         plan["resources"]["mode"] = str(route.get("mode", plan["resources"]["mode"]))

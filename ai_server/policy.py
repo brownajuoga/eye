@@ -17,11 +17,23 @@ DEFAULT_POLICY = {
         "confidence_threshold": 0.35,
         "iou_threshold": 0.5,
     },
+    "wifi": {
+        "mode": "multi",
+        "vision_palette": "night_vision",
+        "privacy_mode": False,
+        "tripwire_z_threshold": 2.1,
+        "deauth_rate_threshold": 5,
+        "channel_hop": True,
+        "locked_channel": 6,
+        "nodemcu_mode": "promisc",
+        "canary_ssid": "EYE_CANARY_AP",
+        "known_aps": {},
+    },
     "model": {
-        "default": "yolov8n.pt",
-        "lightweight": "yolov8n.pt",
-        "balanced": "yolov8n.pt",
-        "performance": "yolov8n.pt",
+        "default": "rf_multi_guard.profile",
+        "lightweight": "rf_privacy_occupancy.profile",
+        "balanced": "rf_multi_guard.profile",
+        "performance": "rf_wids_security.profile",
         "custom": None,
         "confidence_threshold": 0.35,
     },
@@ -33,73 +45,93 @@ DEFAULT_POLICY = {
         "transformers_model": "vikhyatk/moondream2",
         "max_retries": 2,
         "timeout_seconds": 20,
-        "task_profile": "general",
-        "mission": "Monitor the scene, reason about meaningful activity, and adapt system behavior when patterns emerge.",
+        "task_profile": "wifi_security",
+        "mission": "Monitor 2.4 GHz RF spectrum, detect wireless intrusions and physical link disturbances, and support privacy-preserving occupancy sensing.",
         "operator_instructions": "",
-        "active_task": "Autonomously monitor the environment while staying controllable by the user.",
+        "active_task": "Continuously track Wi-Fi beacons, probes, RSSI link perturbations, and WIDS anomalies.",
     },
     "memory": {
         "max_events": 500,
-        "recent_limit": 10,
+        "recent_limit": 12,
         "pattern_window": 25,
     },
-    "watch_for": ["person", "bag", "backpack", "handbag", "cell phone", "bottle"],
-    "ignore": ["chair", "couch", "bed"],
+    "watch_for": [
+        "deauth_flood",
+        "evil_twin",
+        "rssi_tripwire_motion",
+        "canary_hit",
+        "beacon_spam",
+        "channel_congestion",
+        "probe_burst",
+    ],
+    "ignore": ["ctrl"],
     "video_analysis": {
         "sample_interval_seconds": 1.0,
-        "max_frames": 8,
+        "max_frames": 24,
     },
     "ui": {
-        "refresh_interval_seconds": 2.0,
+        "refresh_interval_seconds": 1.5,
         "default_feed_id": "",
     },
     "task_routing": {
         "general_question": {
             "mode": "balanced",
             "expert_backend": "mock",
-            "preferred_model": "yolov8n.pt",
+            "preferred_model": "rf_multi_guard.profile",
             "feed_strategy": "latest",
         },
         "object_search": {
             "mode": "performance",
             "expert_backend": "mock",
-            "preferred_model": "yolo11n.pt",
+            "preferred_model": "rf_wids_security.profile",
             "feed_strategy": "all_feeds",
         },
         "event_time_query": {
             "mode": "balanced",
             "expert_backend": "mock",
-            "preferred_model": "yolov8n.pt",
+            "preferred_model": "rf_multi_guard.profile",
             "feed_strategy": "selected",
         },
         "resource_switch": {
             "mode": "balanced",
             "expert_backend": "mock",
-            "preferred_model": "yolo11n.pt",
+            "preferred_model": "rf_spectrum_survey.profile",
             "feed_strategy": "latest",
         },
     },
     "automation_rules": [
         {
-            "name": "Person Alert",
-            "condition": "IF person detected with confidence > 0.60",
-            "action": "Create alert and keep balanced mode active",
+            "name": "Deauth Attack Guard",
+            "condition": "IF deauth_flood detected with confidence > 0.65",
+            "action": "Create alert and switch to performance mode",
             "enabled": True,
         },
         {
-            "name": "Retail Concealment Watch",
-            "condition": "IF person and handbag detected with confidence > 0.45",
-            "action": "Create alert for possible concealment and keep performance mode active",
+            "name": "Evil Twin Rogue AP Alert",
+            "condition": "IF evil_twin detected with confidence > 0.70",
+            "action": "Create critical alert for rogue BSSID",
             "enabled": True,
         },
         {
-            "name": "Suspicious Object Handling",
-            "condition": "IF person and bottle detected with confidence > 0.45",
-            "action": "Create alert for item handling review",
+            "name": "Doorway RSSI Motion Tripwire",
+            "condition": "IF rssi_tripwire_motion detected with confidence > 0.55",
+            "action": "Create alert for physical link disturbance",
             "enabled": True,
         },
         {
-            "name": "Idle Optimization",
+            "name": "Canary AP Intrusion",
+            "condition": "IF canary_hit detected with confidence > 0.60",
+            "action": "Create alert for decoy AP interaction",
+            "enabled": True,
+        },
+        {
+            "name": "2.4 GHz Channel Congestion",
+            "condition": "IF channel congestion > 0.75",
+            "action": "Flag channel overlap and recommend cleanest channel",
+            "enabled": True,
+        },
+        {
+            "name": "Idle RF Optimization",
             "condition": "IF no objects for 120 seconds",
             "action": "Reduce analysis frequency and mark system idle",
             "enabled": True,
@@ -163,9 +195,9 @@ class PolicyEngine:
             reason = "No person detected"
         elif len(matches) < int(rules.get("min_watch_matches", 1)):
             important = False
-            reason = "No important objects detected"
+            reason = "No high-priority RF event matched watchlist"
         else:
-            reason = f"Matched watch list: {', '.join(unique_matches)}" if unique_matches else "Policy requested expert review"
+            reason = f"Matched RF watchlist: {', '.join(unique_matches)}" if unique_matches else "Policy requested expert review"
 
         if rules.get("always_analyze"):
             important = True
@@ -267,6 +299,20 @@ class PolicyEngine:
         controls["iou_threshold"] = float(controls.get("iou_threshold", 0.5))
         policy["controls"] = controls
 
+        wifi = dict(policy.get("wifi", {}))
+        wifi["mode"] = str(wifi.get("mode", "multi")).lower()
+        wifi["vision_palette"] = str(wifi.get("vision_palette", "night_vision")).lower()
+        wifi["privacy_mode"] = bool(wifi.get("privacy_mode", False))
+        wifi["tripwire_z_threshold"] = float(wifi.get("tripwire_z_threshold", 2.1))
+        wifi["deauth_rate_threshold"] = int(wifi.get("deauth_rate_threshold", 5))
+        wifi["channel_hop"] = bool(wifi.get("channel_hop", True))
+        wifi["locked_channel"] = max(1, min(13, int(wifi.get("locked_channel", 6))))
+        wifi["nodemcu_mode"] = str(wifi.get("nodemcu_mode", "promisc")).lower()
+        wifi["canary_ssid"] = str(wifi.get("canary_ssid", "EYE_CANARY_AP"))
+        known_aps = wifi.get("known_aps", {})
+        wifi["known_aps"] = known_aps if isinstance(known_aps, dict) else {}
+        policy["wifi"] = wifi
+
         expert = dict(policy.get("expert", {}))
         expert["backend"] = str(expert.get("backend", "mock"))
         expert["realtime_enabled"] = bool(expert.get("realtime_enabled", False))
@@ -275,18 +321,18 @@ class PolicyEngine:
         expert["transformers_model"] = str(expert.get("transformers_model", "vikhyatk/moondream2"))
         expert["max_retries"] = int(expert.get("max_retries", 2))
         expert["timeout_seconds"] = int(expert.get("timeout_seconds", 20))
-        expert["task_profile"] = str(expert.get("task_profile", "general"))
+        expert["task_profile"] = str(expert.get("task_profile", "wifi_security"))
         expert["mission"] = str(
             expert.get(
                 "mission",
-                "Monitor the scene, reason about meaningful activity, and adapt system behavior when patterns emerge.",
+                "Monitor 2.4 GHz RF spectrum, detect wireless intrusions and physical link disturbances, and support privacy-preserving occupancy sensing.",
             )
         )
         expert["operator_instructions"] = str(expert.get("operator_instructions", ""))
         expert["active_task"] = str(
             expert.get(
                 "active_task",
-                "Autonomously monitor the environment while staying controllable by the user.",
+                "Continuously track Wi-Fi beacons, probes, RSSI link perturbations, and WIDS anomalies.",
             )
         )
         policy["expert"] = expert
@@ -297,11 +343,11 @@ class PolicyEngine:
 
         video = dict(policy.get("video_analysis", {}))
         video["sample_interval_seconds"] = float(video.get("sample_interval_seconds", 1.0))
-        video["max_frames"] = int(video.get("max_frames", 8))
+        video["max_frames"] = int(video.get("max_frames", 24))
         policy["video_analysis"] = video
 
         ui = dict(policy.get("ui", {}))
-        ui["refresh_interval_seconds"] = float(ui.get("refresh_interval_seconds", 2.0))
+        ui["refresh_interval_seconds"] = float(ui.get("refresh_interval_seconds", 1.5))
         ui["default_feed_id"] = str(ui.get("default_feed_id", ""))
         policy["ui"] = ui
 

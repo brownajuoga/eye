@@ -4,11 +4,22 @@ controls:
   auto_mode: true
   confidence_threshold: 0.35
   iou_threshold: 0.5
+wifi:
+  mode: multi
+  vision_palette: night_vision
+  privacy_mode: false
+  tripwire_z_threshold: 2.1
+  deauth_rate_threshold: 5
+  channel_hop: true
+  locked_channel: 6
+  nodemcu_mode: promisc
+  canary_ssid: EYE_CANARY_AP
+  known_aps: {}
 model:
-  default: yolov8n.pt
-  lightweight: yolov8n.pt
-  balanced: yolov8n.pt
-  performance: yolov8n.pt
+  default: rf_multi_guard.profile
+  lightweight: rf_privacy_occupancy.profile
+  balanced: rf_multi_guard.profile
+  performance: rf_wids_security.profile
   custom: null
   confidence_threshold: 0.35
 expert:
@@ -19,45 +30,48 @@ expert:
   transformers_model: vikhyatk/moondream2
   max_retries: 2
   timeout_seconds: 20
-  task_profile: general
-  mission: Monitor the scene, reason about meaningful activity, and adapt system behavior
-    when patterns emerge.
+  task_profile: wifi_security
+  mission: Monitor 2.4 GHz RF spectrum, detect wireless intrusions and physical link disturbances,
+    and support privacy-preserving occupancy sensing.
   operator_instructions: ''
-  active_task: Autonomously monitor the environment while staying controllable by
-    the user.
+  active_task: Continuously track Wi-Fi beacons, probes, RSSI link perturbations, and
+    WIDS anomalies across NodeMCU and host interfaces.
 memory:
   max_events: 500
-  recent_limit: 10
+  recent_limit: 12
   pattern_window: 25
 watch_for:
-- bottle
-- backpack
-- cell phone
-- hand
-- handbag
-- laptop
-- person
+- deauth_flood
+- evil_twin
+- rssi_tripwire_motion
+- canary_hit
+- beacon_spam
+- channel_congestion
+- probe_burst
 ignore:
-- chair
-- couch
-- bed
-video_analysis:
-  sample_interval_seconds: 1.0
-  max_frames: 8
+- ctrl
 automation_rules:
-- name: Person Alert
-  condition: IF person detected with confidence > 0.60
-  action: Create alert and keep balanced mode active
+- name: Deauth Attack Guard
+  condition: IF deauth_flood detected with confidence > 0.65
+  action: Create alert and switch to performance mode
   enabled: true
-- name: Retail Concealment Watch
-  condition: IF person and handbag detected with confidence > 0.45
-  action: Create alert for possible concealment and keep performance mode active
+- name: Evil Twin Rogue AP Alert
+  condition: IF evil_twin detected with confidence > 0.70
+  action: Create critical alert for rogue BSSID
   enabled: true
-- name: Suspicious Object Handling
-  condition: IF person and bottle detected with confidence > 0.45
-  action: Create alert for item handling review
+- name: Doorway RSSI Motion Tripwire
+  condition: IF rssi_tripwire_motion detected with confidence > 0.55
+  action: Create alert for physical link disturbance
   enabled: true
-- name: Idle Optimization
+- name: Canary AP Intrusion
+  condition: IF canary_hit detected with confidence > 0.60
+  action: Create alert for decoy AP interaction
+  enabled: true
+- name: 2.4 GHz Channel Congestion
+  condition: IF channel congestion > 0.75
+  action: Flag channel overlap and recommend cleanest channel
+  enabled: true
+- name: Idle RF Optimization
   condition: IF no objects for 120 seconds
   action: Reduce analysis frequency and mark system idle
   enabled: true

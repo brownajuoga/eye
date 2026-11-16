@@ -68,7 +68,8 @@ class YoloDetector:
     def describe_runtime(self, policy: dict[str, Any]) -> dict[str, Any]:
         selected_mode = select_runtime_mode(policy.get("mode", "balanced"), self._ram_gb)
         selected_model = resolve_model_path(policy, selected_mode)
-        active_backend = "ultralytics" if YOLO is not None else "opencv_hog_fallback"
+        wifi_mode = str(policy.get("wifi", {}).get("mode", "multi"))
+        active_backend = f"wifi_rf_{wifi_mode}"
         return {
             "ram_gb": self._ram_gb,
             "cpu_count": os.cpu_count() or 0,
@@ -84,17 +85,17 @@ class YoloDetector:
         active_mode = select_runtime_mode(policy.get("mode", "balanced"), self._ram_gb)
         return {
             "input_sources": [
-                "webcam",
-                "video_file",
-                "video_folder",
-                "rtsp_stream",
-                "image_sequence",
-                "multicamera",
+                "nodemcu_usb_serial",
+                "nodemcu_unplugged_wifi",
+                "host_wifi_interface",
+                "pcap_csv_jsonl_upload",
+                "rf_simulator",
             ],
             "detection_modules": [
-                "motion_trigger",
-                "yolo_generic",
-                "opencv_hog_fallback",
+                "wifi_wids_security",
+                "rssi_motion_tripwire",
+                "privacy_occupancy_estimator",
+                "spectrum_24ghz_analyzer",
                 "rule_engine",
             ],
             "expert_backends": ["mock", "ollama", "transformers"],
@@ -103,17 +104,34 @@ class YoloDetector:
             "supports_runtime_model_switching": True,
             "supports_policy_hot_reload": True,
             "supports_multicamera_sync": True,
-            "tracking_status": "groundwork_ready",
-            "calibration_status": "planned",
+            "tracking_status": "rf_emitter_tracking_active",
+            "calibration_status": "draggable_anchors_ready",
             "active_mode": active_mode,
             "configured_model": resolve_model_path(policy, active_mode),
         }
 
     def list_models(self, policy: dict[str, Any]) -> list[dict[str, Any]]:
         active_path = resolve_model_path(policy, select_runtime_mode(policy.get("mode", "balanced"), self._ram_gb))
-        candidates = discover_model_files()
+        builtin_profiles = [
+            ("rf_multi_guard.profile", "Multi-Mode RF Guard (WIDS + Tripwire + Occupancy + Spectrum)", 12800),
+            ("rf_wids_security.profile", "WIDS Blue-Team Security (Deauth, Evil Twin, Canary AP)", 9600),
+            ("rf_tripwire_motion.profile", "RSSI Link Disturbance Tripwire (Zero-Camera Motion)", 8400),
+            ("rf_privacy_occupancy.profile", "Privacy-First Occupancy Estimator (Anonymized MACs)", 7200),
+            ("rf_spectrum_survey.profile", "2.4 GHz Spectrum & Congestion Analyzer (Ch 1-13)", 6800),
+        ]
         models: list[dict[str, Any]] = []
-        for path in candidates:
+        for prof_id, _desc, sz in builtin_profiles:
+            models.append(
+                {
+                    "id": prof_id,
+                    "name": prof_id,
+                    "path": prof_id,
+                    "size_bytes": sz,
+                    "format": "rf-profile",
+                    "active": prof_id == active_path or prof_id == Path(active_path).name,
+                }
+            )
+        for path in discover_model_files():
             file_path = Path(path)
             models.append(
                 {
